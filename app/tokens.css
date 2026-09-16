@@ -1,0 +1,134 @@
+/* Foundation and semantic tokens. Components consume these names only. */
+@font-face { font-family:"Inter";font-style:normal;font-weight:100 900;font-display:swap;src:url("/fonts/InterVariable.woff2") format("woff2"); }
+@property --background { syntax:"<color>"; inherits:true; initial-value:#F5F7FA; }
+@property --foreground { syntax:"<color>"; inherits:true; initial-value:#202833; }
+@property --card { syntax:"<color>"; inherits:true; initial-value:#FFFFFF; }
+@property --card-foreground { syntax:"<color>"; inherits:true; initial-value:#202833; }
+@property --popover { syntax:"<color>"; inherits:true; initial-value:#FFFFFF; }
+@property --popover-foreground { syntax:"<color>"; inherits:true; initial-value:#202833; }
+@property --secondary { syntax:"<color>"; inherits:true; initial-value:#EDF0F5; }
+@property --secondary-foreground { syntax:"<color>"; inherits:true; initial-value:#202833; }
+@property --muted { syntax:"<color>"; inherits:true; initial-value:#EDF0F5; }
+@property --muted-foreground { syntax:"<color>"; inherits:true; initial-value:#667384; }
+@property --accent { syntax:"<color>"; inherits:true; initial-value:#E7EDF5; }
+@property --accent-foreground { syntax:"<color>"; inherits:true; initial-value:#202833; }
+@property --border { syntax:"<color>"; inherits:true; initial-value:#DCE2EA; }
+@property --input { syntax:"<color>"; inherits:true; initial-value:#DCE2EA; }
+@property --text-weak { syntax:"<color>"; inherits:true; initial-value:#798493; }
+@property --table-project { syntax:"<color>"; inherits:true; initial-value:#E7EBF0; }
+@property --table-task { syntax:"<color>"; inherits:true; initial-value:#F0F3F7; }
+@property --table-month { syntax:"<color>"; inherits:true; initial-value:#E7EBF0; }
+@property --table-date { syntax:"<color>"; inherits:true; initial-value:#F0F3F7; }
+@property --table-canvas { syntax:"<color>"; inherits:true; initial-value:#FAFBFD; }
+@property --table-add { syntax:"<color>"; inherits:true; initial-value:#F0F3F7; }
+@property --table-grid { syntax:"<color>"; inherits:true; initial-value:#172033; }
+@property --edge-base { syntax:"<color>"; inherits:true; initial-value:#172033; }
+@property --task-text-mix { syntax:"<color>"; inherits:true; initial-value:#172033; }
+@property --segment-active { syntax:"<color>"; inherits:true; initial-value:#D9E3F4; }
+@property --segment-border { syntax:"<color>"; inherits:true; initial-value:#A9BDE1; }
+@property --table-project-text { syntax:"<color>"; inherits:true; initial-value:#202833; }
+@property --table-task-text { syntax:"<color>"; inherits:true; initial-value:#202833; }
+@property --table-month-text { syntax:"<color>"; inherits:true; initial-value:#202833; }
+@property --table-date-text { syntax:"<color>"; inherits:true; initial-value:#202833; }
+:root {
+  --background:#F5F7FA;
+  --foreground:#202833;
+  --card:#FFFFFF;
+  --card-foreground:#202833;
+  --popover:#FFFFFF;
+  --popover-foreground:#202833;
+  --secondary:#EDF0F5;
+  --secondary-foreground:#202833;
+  --muted:#EDF0F5;
+  --muted-foreground:#667384;
+  --accent:#E7EDF5;
+  --accent-foreground:#202833;
+  --border:#DCE2EA;
+  --input:#DCE2EA;
+  --text-weak:#798493;
+  --table-project:#E7EBF0;
+  --table-task:#F0F3F7;
+  --table-month:#E7EBF0;
+  --table-date:#F0F3F7;
+  --table-canvas:#FAFBFD;
+  --table-add:#F0F3F7;
+  --table-grid:#172033;
+  --edge-base:#172033;
+  --task-text-mix:#172033;
+  --segment-active:#D9E3F4;
+  --segment-border:#A9BDE1;
+  color-scheme:light;
+  --primary:#4C7EF3; --primary-hover:#416DD6; --primary-foreground:#FFFFFF;
+  --ink-dark:#202833; --ink-light:#E6EAF0;
+  --category-paper:#4C7EF3; --category-experiment:#D98A2B; --category-engineering:#2E9E8F; --category-other:#8B7BE8;
+  --status-progress:#2E9E8F; --destructive:#F05252; --ring:var(--primary);
+  --today-color:#F05252; --today-line:color-mix(in srgb,var(--today-color) 60%,transparent);
+  --today-pill:color-mix(in srgb,var(--today-color) 14%,var(--card));
+  --space-4:4px; --space-8:8px; --space-12:12px; --space-16:16px; --space-24:24px;
+  --font-11:11px; --font-12:12px; --font-13:13px; --font-14:14px; --font-18:18px;
+  /* Weekday labels are the explicit 10px exception to the five-size type scale. */
+  --font-weekday:10px; --line-16:16px; --line-20:20px;
+  --font-sans:"Inter",-apple-system,"PingFang SC","Noto Sans SC",sans-serif;
+  --radius-sm:4px; --radius-md:8px; --radius-lg:12px; --radius:8px; --radius-pill:999px;
+  --stroke:1px; --stroke-selected:1.5px; --bar-accent:3px; --category-dot:6px; --arrow-size:5px;
+  --bar-height:24px; --bar-radius:4px; --bar-fill:16%; --bar-border:45%; --bar-hover-fill:24%; --bar-hover-border:70%;
+  --completed-opacity:.55; --filter-opacity:.2; --line-opacity:22%; --dependency-color:color-mix(in srgb,var(--edge-base) var(--line-opacity),transparent);
+  --grid-day-opacity:4%; --grid-week-opacity:10%; --grid-month-opacity:18%; --grid-weekend-opacity:2.5%;
+  --handle-idle:color-mix(in srgb,var(--muted-foreground) 25%,transparent); --handle-active:color-mix(in srgb,var(--muted-foreground) 65%,transparent);
+  --fixed-columns:420px; --motion-fast:160ms; --motion-theme:360ms; --ease-out:cubic-bezier(.22,1,.36,1);
+}
+html[data-theme="dark"] {
+  --background:#0E1116;
+  --foreground:#E6EAF0;
+  --card:#151A21;
+  --card-foreground:#E6EAF0;
+  --popover:#1B212A;
+  --popover-foreground:#E6EAF0;
+  --secondary:#1B212A;
+  --secondary-foreground:#E6EAF0;
+  --muted:#1B212A;
+  --muted-foreground:#9AA4B2;
+  --accent:#1B212A;
+  --accent-foreground:#E6EAF0;
+  --border:#232A33;
+  --input:#232A33;
+  --text-weak:#6B7684;
+  --table-project:#0B0E13;
+  --table-task:#151A21;
+  --table-month:#151A21;
+  --table-date:#151A21;
+  --table-canvas:#0E1116;
+  --table-add:#11151C;
+  --table-grid:#FFFFFF;
+  --edge-base:#FFFFFF;
+  --task-text-mix:#FFFFFF;
+  --segment-active:#2B3B53;
+  --segment-border:#4C6282;
+  color-scheme:dark;
+}
+@media(prefers-reduced-motion:no-preference) {
+  :root { transition-property:--background,--foreground,--card,--card-foreground,--popover,--popover-foreground,--secondary,--secondary-foreground,--muted,--muted-foreground,--accent,--accent-foreground,--border,--input,--text-weak,--table-project,--table-task,--table-month,--table-date,--table-canvas,--table-add,--table-grid,--edge-base,--task-text-mix,--segment-active,--segment-border,--table-project-text,--table-task-text,--table-month-text,--table-date-text;transition-duration:var(--motion-theme);transition-timing-function:var(--ease-out); }
+}
+@theme inline {
+  --text-xs:var(--font-12); --text-sm:var(--font-14); --text-base:var(--font-14); --text-lg:var(--font-18);
+  --spacing:var(--space-4);
+  --color-background:var(--background);
+  --color-foreground:var(--foreground);
+  --color-card:var(--card);
+  --color-card-foreground:var(--card-foreground);
+  --color-popover:var(--popover);
+  --color-popover-foreground:var(--popover-foreground);
+  --color-primary:var(--primary);
+  --color-primary-foreground:var(--primary-foreground);
+  --color-secondary:var(--secondary);
+  --color-secondary-foreground:var(--secondary-foreground);
+  --color-muted:var(--muted);
+  --color-muted-foreground:var(--muted-foreground);
+  --color-accent:var(--accent);
+  --color-accent-foreground:var(--accent-foreground);
+  --color-destructive:var(--destructive);
+  --color-border:var(--border);
+  --color-input:var(--input);
+  --color-ring:var(--ring);
+  --color-slate-50:var(--secondary); --color-blue-50:var(--secondary); --color-slate-400:var(--text-weak); --color-slate-500:var(--muted-foreground); --color-blue-700:var(--primary); --color-blue-800:var(--primary); --color-red-700:var(--destructive);
+}

@@ -1,8 +1,29 @@
-export type TaskType = "论文" | "实验" | "工程" | "其他";
-export type Task = { id: string; title: string; projectIds: string[]; order: Record<string, number>; type: TaskType; start: string; end: string; status: "未开始" | "进行中" | "已完成"; milestone?: boolean };
+export type TaskType = string;
+import type {InboxKind,InboxUrgency} from "./inbox";
+
+export type Task = { id: string; rowId?: string; title: string; memo?: string; projectIds: string[]; order: Record<string, number>; type: TaskType; start: string; end: string; status: "未开始" | "进行中" | "已完成"; milestone?: boolean; urgency?:InboxUrgency; todoKind?:InboxKind };
 export type TransferMode = "move" | "copy" | "share";
 export type Port = { taskId: string; day: number; side: "top" | "bottom" };
 export type Dependency = { id: string; source: Port; target: Port };
+
+export function deleteProjectContent(tasks:Task[],edges:Dependency[],projectId:string,cascade:boolean){
+  const affected=tasks.filter(task=>task.projectIds.includes(projectId));
+  const unclassifiedCount=affected.filter(task=>task.projectIds.length===1).length;
+  if(cascade){
+    const removed=new Set(affected.map(task=>task.id));
+    return {tasks:tasks.filter(task=>!removed.has(task.id)),edges:edges.filter(edge=>!removed.has(edge.source.taskId)&&!removed.has(edge.target.taskId)),affectedCount:affected.length,unclassifiedCount};
+  }
+  return {
+    tasks:tasks.map(task=>{
+      if(!task.projectIds.includes(projectId))return task;
+      const {[projectId]:_,...order}=task.order;
+      return {...task,projectIds:task.projectIds.filter(id=>id!==projectId),order};
+    }),
+    edges,
+    affectedCount:affected.length,
+    unclassifiedCount,
+  };
+}
 
 // Membership and ordering belong to each project; content and edges belong to task identity.
 export function transferTask(tasks: Task[], id: string, from: string, to: string, before: string | undefined, mode: TransferMode, copyId: string): Task[] {

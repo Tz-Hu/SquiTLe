@@ -1,0 +1,18 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {
+  clampTaskColumnWidth,
+  TASK_COLUMN_MAX,
+  TASK_COLUMN_MIN,
+} from '../lib/timeline-layout.ts';
+
+test('task column width respects its normal limits', () => {
+  assert.equal(clampTaskColumnWidth(100,1400),TASK_COLUMN_MIN);
+  assert.equal(clampTaskColumnWidth(280,1400),280);
+  assert.equal(clampTaskColumnWidth(900,1400),TASK_COLUMN_MAX);
+});
+
+test('task column leaves usable room for the timeline', () => {
+  assert.equal(clampTaskColumnWidth(420,760),280);
+  assert.equal(clampTaskColumnWidth(420,600),TASK_COLUMN_MIN);
+});
