@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {defaultAppearance,restoreAppearance,restoreCategories,categoryDefaults,taskBounds,layoutTokens} from '../lib/appearance.ts';
+import {defaultAppearance,restoreAppearance,restoreCategories,migrateCategoryCatalog,categoryDefaults,WORK_TYPE_CATALOG_VERSION,taskBounds,layoutTokens} from '../lib/appearance.ts';
 import {migrateTablePalettes,defaultTablePalettes} from '../lib/table-colors.ts';
 
 test('task height and both connection edges share a fixed row center',()=>{
@@ -20,6 +20,8 @@ test('settings restore defaults and clamp invalid saved values',()=>{
   assert.equal(restoreAppearance({barRadius:3,completedOpacity:67}).completedOpacity,55);
   assert.deepEqual(restoreCategories({论文:'bad'}),categoryDefaults);
   assert.equal(restoreCategories({论文:'#123456'}).论文,'#123456');
+  assert.deepEqual(Object.keys(migrateCategoryCatalog({论文:'#123456',工程:'#334455'},1)),['论文','实验','工程']);
+  assert.equal(migrateCategoryCatalog({论文:'#123456',工程:'#334455'},WORK_TYPE_CATALOG_VERSION).实验,undefined);
 });
 test('palette upgrade changes old defaults and retains custom colors',()=>{
   const upgraded=migrateTablePalettes({dark:{canvas:'#243248',task:'#123456',grid:'#35445c'}},undefined);

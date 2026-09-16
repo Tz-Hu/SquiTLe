@@ -24,7 +24,7 @@ import { historyOf, commit, undo, redo } from "@/lib/history";
 import { flushSync } from "react-dom";
 import { panViewport, windowScrollLimit } from "@/lib/pan";
 import { defaultTablePalettes, migrateTablePalettes, tableColorLabels, tableTextColor, type TableColors, type TablePalettes } from "@/lib/table-colors";
-import { categoryDefaults, layoutTokens, taskBounds, appearanceFields, appearancePresetValues, snapAppearanceValue, defaultAppearance, restoreAppearance, restoreCategories } from "@/lib/appearance";
+import { categoryDefaults, WORK_TYPE_CATALOG_VERSION, layoutTokens, taskBounds, appearanceFields, appearancePresetValues, snapAppearanceValue, defaultAppearance, restoreAppearance, restoreCategories, migrateCategoryCatalog } from "@/lib/appearance";
 import { moveRow, moveItem, insertItemRow, rowId, hasItemOverlap } from "@/lib/rows";
 import { ManualDateField } from "@/components/manual-date-field";
 import { expandedInset, foldedSide, portOffset, visiblePortDays, taskBarWidth } from "@/lib/task-presentation";
@@ -369,7 +369,7 @@ function TimelineApp() {
 
   const applyPersistedState=(state:PersistedState)=>{
         const restored:Schedule = { projects: state.projects as Project[], tasks: state.tasks as Task[], edges: state.edges as Dependency[], inbox:restoreInbox(state.inbox) };
-        const restoredColors=restoreCategories(state.categoryColors);
+        const restoredColors=migrateCategoryCatalog(state.categoryColors,state.workTypeCatalogVersion);
         for(const task of restored.tasks)if(task.type&&!restoredColors[task.type])restoredColors[task.type]=categoryDefaults["idea与思考"];
         if(inboxKinds.includes(state.inboxKind))setInboxKind(state.inboxKind);
         if(["manual","urgency","date"].includes(state.inboxSort))setInboxSort(state.inboxSort);
@@ -434,7 +434,7 @@ function TimelineApp() {
     } catch { setNotice("保存的数据未能读取，原始数据仍保留在浏览器中。"); return; }
     setReady(true);
   }, []);
-  const persistedState={ dataVersion:CURRENT_DATA_VERSION, projects, tasks, edges, inbox, inboxKind, inboxSort, inboxCollapsed, collapsed: [...collapsedProjects], defaultDays, autoConnectionSides, handleWidth, handleGap, edgeLevel, arrowLevel, personalDefaults, theme, primaryColor, tablePalettes, paletteVersion:2, categoryColors:colors, customColorPresets, appearance, editorMode, settingsWidth, timelineRowHeight, dayWidth, weekStart, defaultTaskType, hoverSpeed, completedMode, insertionDelay, wordingStyle, inboxCompleted, inboxSize };
+  const persistedState={ dataVersion:CURRENT_DATA_VERSION, workTypeCatalogVersion:WORK_TYPE_CATALOG_VERSION, projects, tasks, edges, inbox, inboxKind, inboxSort, inboxCollapsed, collapsed: [...collapsedProjects], defaultDays, autoConnectionSides, handleWidth, handleGap, edgeLevel, arrowLevel, personalDefaults, theme, primaryColor, tablePalettes, paletteVersion:2, categoryColors:colors, customColorPresets, appearance, editorMode, settingsWidth, timelineRowHeight, dayWidth, weekStart, defaultTaskType, hoverSpeed, completedMode, insertionDelay, wordingStyle, inboxCompleted, inboxSize };
   useEffect(() => {
     if (!ready) return;
     try { localStorage.setItem("research-gantt-v2", JSON.stringify(persistedState)); }

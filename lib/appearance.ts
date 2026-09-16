@@ -1,5 +1,6 @@
 // Single source for configurable visual values. Geometry uses these same values.
 export const categoryDefaults = {论文:"#4C7EF3",实验:"#E2A93B","算法/仿真":"#C96F3B",工程:"#2E9E8F",整理:"#8B7BE8","idea与思考":"#C06BD8"};
+export const WORK_TYPE_CATALOG_VERSION = 2;
 export const layoutTokens = {rowHeight:64,addRowHeight:16,insertionHint:16,cornerRadius:4,arrowSize:5,routeClearance:8,stroke:1,edgeMask:3,edgeHit:14};
 export function taskBounds(height:number,rowHeight=layoutTokens.rowHeight){const top=(rowHeight-height)/2;return {top,bottom:top+height};}
 export const appearanceFields = {
@@ -49,4 +50,11 @@ export function restoreCategories(value:unknown):Record<string,string>{
     };
   }
   return valid as Record<string,string>;
+}
+export function migrateCategoryCatalog(value:unknown,version:unknown):Record<string,string>{
+  const restored=restoreCategories(value);
+  if(Number(version)>=WORK_TYPE_CATALOG_VERSION||restored.实验)return restored;
+  const entries=Object.entries(restored),paperIndex=entries.findIndex(([name])=>name==="论文");
+  entries.splice(paperIndex>=0?paperIndex+1:0,0,["实验",categoryDefaults.实验]);
+  return Object.fromEntries(entries);
 }
