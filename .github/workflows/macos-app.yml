@@ -1,0 +1,42 @@
+name: Build Squitle for macOS
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    tags:
+      - "desktop-v*"
+
+jobs:
+  build-macos:
+    runs-on: macos-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: desktop/src-tauri
+
+      - name: Install Tauri CLI
+        run: cargo install tauri-cli --version "^2" --locked
+
+      - name: Build Squitle
+        working-directory: desktop
+        run: cargo tauri build --config src-tauri/tauri.conf.json
+
+      - name: Upload macOS bundles
+        uses: actions/upload-artifact@v4
+        with:
+          name: Squitle-macOS
+          path: |
+            desktop/src-tauri/target/release/bundle/macos/*.app
+            desktop/src-tauri/target/release/bundle/dmg/*.dmg
+          if-no-files-found: error

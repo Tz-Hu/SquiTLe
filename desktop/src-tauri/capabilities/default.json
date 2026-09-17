@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "main-window",
+  "description": "Local document access selected through the native file dialog.",
+  "windows": ["main"],
+  "permissions": ["core:default", "dialog:allow-open"]
+}
