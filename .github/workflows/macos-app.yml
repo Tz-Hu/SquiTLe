@@ -25,12 +25,9 @@ jobs:
         with:
           workspaces: desktop/src-tauri
 
-      - name: Install Tauri CLI
-        run: cargo install tauri-cli --version "^2" --locked
-
       - name: Build Squitle
         working-directory: desktop
-        run: cargo tauri build --config src-tauri/tauri.conf.json
+        run: npx --yes @tauri-apps/cli@^2 build --config src-tauri/tauri.conf.json
 
       - name: Upload macOS bundles
         uses: actions/upload-artifact@v4
