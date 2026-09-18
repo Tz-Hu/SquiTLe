@@ -1,10 +1,37 @@
 export type TaskType = string;
 import type {InboxKind,InboxUrgency} from "./inbox";
 
-export type Task = { id: string; rowId?: string; title: string; memo?: string; projectIds: string[]; order: Record<string, number>; type: TaskType; start: string; end: string; status: "未开始" | "进行中" | "已完成"; milestone?: boolean; urgency?:InboxUrgency; todoKind?:InboxKind };
+export type TaskOutput = { id: string; text: string };
+export type Task = { id: string; rowId?: string; title: string; memo?: string; outputs?: TaskOutput[]; projectIds: string[]; order: Record<string, number>; type: TaskType; start: string; end: string; status: "未开始" | "进行中" | "已完成"; milestone?: boolean; urgency?:InboxUrgency; todoKind?:InboxKind };
 export type TransferMode = "move" | "copy" | "share";
 export type Port = { taskId: string; day: number; side: "top" | "bottom" };
-export type Dependency = { id: string; source: Port; target: Port };
+export type Dependency = { id: string; source: Port; target: Port; outputIds?: string[] };
+
+export const taskOutputs=(task:Pick<Task,"outputs">):TaskOutput[]=>(task.outputs??[]).filter((output):output is TaskOutput=>!!output&&typeof output.id==="string"&&typeof output.text==="string"&&!!output.id&&!!output.text.trim());
+
+export function dependencyOutputs(edge:Pick<Dependency,"outputIds">,source:Pick<Task,"outputs">){
+  const outputs=taskOutputs(source);
+  const selected=new Set(edge.outputIds??[]);
+  return outputs.flatMap((output,index)=>selected.has(output.id)?[{...output,number:index+1}]:[]);
+}
+
+export function dependencyIsCompleted(edge:Pick<Dependency,"target">,tasks:Pick<Task,"id"|"status">[]){
+  return tasks.find(task=>task.id===edge.target.taskId)?.status==="已完成";
+}
+
+export function pruneDependencyOutputs(edges:Dependency[],taskId:string,outputs:TaskOutput[]){
+  const valid=new Set(outputs.map(output=>output.id));
+  return edges.map(edge=>edge.source.taskId!==taskId?edge:{...edge,outputIds:[...new Set(edge.outputIds??[])].filter(id=>valid.has(id))});
+}
+
+export function appendDependencyOutput(tasks:Task[],edges:Dependency[],edgeId:string,text:string,outputId:string){
+  const value=text.trim();
+  const edge=edges.find(item=>item.id===edgeId);
+  if(!value||!edge)return {tasks,edges};
+  const nextTasks=tasks.map(task=>task.id===edge.source.taskId?{...task,outputs:[...taskOutputs(task),{id:outputId,text:value}]}:task);
+  const nextEdges=edges.map(item=>item.id===edgeId?{...item,outputIds:[...new Set([...(item.outputIds??[]),outputId])]}:item);
+  return {tasks:nextTasks,edges:nextEdges};
+}
 
 export function deleteProjectContent(tasks:Task[],edges:Dependency[],projectId:string,cascade:boolean){
   const affected=tasks.filter(task=>task.projectIds.includes(projectId));
