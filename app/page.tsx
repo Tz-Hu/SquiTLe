@@ -40,7 +40,7 @@ import {Tooltip,TooltipProvider,TooltipTrigger,TooltipContent} from "@/component
 import {advanceScheduleDocument,backupFilename, createBackup, CURRENT_DATA_VERSION, loadScheduleDocument, migratePersistedState, parseBackup, type PersistedState,type ScheduleDocument} from "@/lib/persistence";
 import {extractMemoLinks} from "@/lib/memo-links";
 import {clampSettingsNavWidth,SETTINGS_NAV_MAX,SETTINGS_NAV_MIN} from "@/lib/settings-layout";
-import {clampTaskColumnWidth,PROJECT_COLUMN_WIDTH,TASK_COLUMN_DEFAULT,TASK_COLUMN_MAX,TASK_COLUMN_MIN} from "@/lib/timeline-layout";
+import {clampTaskColumnWidth,COLLAPSED_PROJECT_HEIGHT,PROJECT_COLUMN_WIDTH,TASK_COLUMN_DEFAULT,TASK_COLUMN_MAX,TASK_COLUMN_MIN} from "@/lib/timeline-layout";
 import {deleteWorkType,renameWorkType,renameWorkTypeColorMap} from "@/lib/work-types";
 import {reconcileTracks,taskTypeForTrack,tracksFromTasks,type TaskTrack} from "@/lib/tracks";
 import {createScheduleStorage,getOrCreateDeviceId,isDesktopRuntime,LEGACY_DOCUMENT_BACKUP_KEY,saveDesktopJson,type ScheduleStorage} from "@/lib/storage";
@@ -570,7 +570,7 @@ function TimelineApp() {
   }),[displayedProjects,tasks,rowPreview,completedMode,locatedTask]);
   const baseRows=useMemo<VisibleRow[]>(()=>projectGroups.flatMap<VisibleRow>(group=>{
     if(!group.tasks.length)return [{kind:"empty",project:group.project}];
-    if(collapsedProjects.has(group.project.id))return [{kind:"summary",project:group.project,tasks:group.tasks},{kind:"add",project:group.project}];
+    if(collapsedProjects.has(group.project.id))return [{kind:"summary",project:group.project,tasks:group.tasks}];
     return [...group.rows.map(items=>({kind:"task" as const,project:group.project,task:items[0],tasks:items})),{kind:"add" as const,project:group.project}];
   }),[projectGroups,collapsedProjects]);
   const visibleRows=useMemo<VisibleRow[]>(()=>{
@@ -579,7 +579,7 @@ function TimelineApp() {
     if(index<0)return baseRows;
     return [...baseRows.slice(0,index),{kind:"insert",project:baseRows[index].project,phase:insertion.phase},...baseRows.slice(index)];
   },[baseRows,insertion]);
-  const rowHeight=(row:VisibleRow)=>row.kind==="insert"?(row.phase==="hint"?timelineRowHeight/4:timelineRowHeight):row.kind==="add"?layoutTokens.addRowHeight:row.kind==="empty"&&collapsedProjects.has(row.project.id)?48:timelineRowHeight;
+  const rowHeight=(row:VisibleRow)=>row.kind==="insert"?(row.phase==="hint"?timelineRowHeight/4:timelineRowHeight):row.kind==="add"?layoutTokens.addRowHeight:(row.kind==="summary"||row.kind==="empty")&&collapsedProjects.has(row.project.id)?COLLAPSED_PROJECT_HEIGHT:timelineRowHeight;
   const rowTops=useMemo(()=>{let y=0;return visibleRows.map(row=>{const top=y;y+=rowHeight(row);return top;});},[visibleRows,timelineRowHeight]);
   const rowsHeight=visibleRows.reduce((sum,row)=>sum+rowHeight(row),0);
   const rowAtY=(y:number)=>visibleRows.findIndex((row,index)=>y>=rowTops[index]&&y<rowTops[index]+rowHeight(row));
@@ -1519,7 +1519,7 @@ function TimelineApp() {
           return <div key={group.project.id} data-row-key={`project-${group.project.id}`} data-project-card={group.project.id} data-dragging={projectDrag===group.project.id||undefined} data-empty={group.tasks.length===0||undefined} data-collapsed={collapsedProjects.has(group.project.id)||undefined} className="project-card relative border-b border-r border-[var(--border)] table-project bg-[var(--table-project)] px-2 py-3" style={{height,borderBottomColor:"var(--table-projectLine)"}}>
             <div className="flex min-w-0 items-start gap-1 pr-7">
               <button aria-label={t("拖动整行：{0}",t(group.project.name))} onPointerDown={event=>startProjectDrag(event,group.project.id)} onClick={event=>event.stopPropagation()} className="project-handle grid h-8 w-4 shrink-0 cursor-grab touch-none place-items-center text-slate-400"><GripVertical size={15}/></button>
-              <button onClick={()=>toggleProject(group.project.id)} className="flex min-w-0 flex-1 items-start gap-1.5 text-left"><ChevronDown size={15} className={`shrink-0 transition-transform ${collapsedProjects.has(group.project.id) ? "rotate-[-90deg]" : ""}`}/><span className="min-w-0"><span className="project-name block">{t(group.project.name)}</span>{!(group.tasks.length===0&&collapsedProjects.has(group.project.id))&&<span className="meta mt-1 block">{group.tasks.length} {t("项")}</span>}</span></button>
+              <button onClick={()=>toggleProject(group.project.id)} className="flex min-w-0 flex-1 items-start gap-1.5 text-left"><ChevronDown size={15} className={`shrink-0 transition-transform ${collapsedProjects.has(group.project.id) ? "rotate-[-90deg]" : ""}`}/><span className="min-w-0"><span className="project-name block">{t(group.project.name)}</span>{!(group.tasks.length===0&&collapsedProjects.has(group.project.id))&&<span className="project-meta meta mt-1 block">{group.tasks.length} {t("项")}</span>}</span></button>
             </div>
             <DropdownMenu><DropdownMenuTrigger asChild><button className="project-actions absolute right-1 top-3 grid size-8 place-items-center rounded-lg" aria-label={t("{0}项目操作",t(group.project.name))}><Ellipsis size={17}/></button></DropdownMenuTrigger><DropdownMenuContent align="start" onCloseAutoFocus={event=>finishProjectMenuClose(event,group.project.id)}><DropdownMenuItem onSelect={()=>{pendingRenameProjectRef.current=group.project;}}><Pencil/>{t("重命名项目")}</DropdownMenuItem><DropdownMenuItem className="text-[var(--destructive)]" onSelect={()=>requestProjectDelete(group.project)}><Trash2/>{t("删除项目")}</DropdownMenuItem></DropdownMenuContent></DropdownMenu>
           </div>;
