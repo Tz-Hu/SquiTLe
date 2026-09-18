@@ -18,3 +18,8 @@ export function reconcileTracks(tasks:Task[],tracks:TaskTrack[]=[]):TaskTrack[]{
   const known=new Set(retained.map(track=>track.id));
   return [...retained,...tracksFromTasks(tasks).filter(track=>!known.has(track.id))];
 }
+
+export function taskTypeForTrack(tasks:Task[],tracks:TaskTrack[],trackId:string|undefined,fallback:TaskType):TaskType{
+  if(!trackId)return fallback;
+  return tracks.find(track=>track.id===trackId)?.type??tasks.find(task=>rowId(task)===trackId)?.type??fallback;
+}
