@@ -42,7 +42,7 @@ import {extractMemoLinks} from "@/lib/memo-links";
 import {clampSettingsNavWidth,SETTINGS_NAV_MAX,SETTINGS_NAV_MIN} from "@/lib/settings-layout";
 import {clampTaskColumnWidth,PROJECT_COLUMN_WIDTH,TASK_COLUMN_DEFAULT,TASK_COLUMN_MAX,TASK_COLUMN_MIN} from "@/lib/timeline-layout";
 import {deleteWorkType,renameWorkType,renameWorkTypeColorMap} from "@/lib/work-types";
-import {reconcileTracks,tracksFromTasks,type TaskTrack} from "@/lib/tracks";
+import {reconcileTracks,taskTypeForTrack,tracksFromTasks,type TaskTrack} from "@/lib/tracks";
 import {createScheduleStorage,getOrCreateDeviceId,isDesktopRuntime,LEGACY_DOCUMENT_BACKUP_KEY,saveDesktopJson,type ScheduleStorage} from "@/lib/storage";
 import {obstaclesNearRoute} from "@/lib/connection-routing";
 
@@ -969,7 +969,7 @@ function TimelineApp() {
     const month=start.slice(0,7);
     setCreationMonth(zoom==="month"&&!exact?month:null);setEndingMonth("");
     const range=zoom==="month"&&!exact?monthRange(month):{start,end:iso(addDays(new Date(start+"T00:00:00"),defaultDays-1))};
-    setEditing({ ...emptyTask(projectId), ...range, type:defaultTaskType, status:statusForRange(range.start,range.end), rowId:targetRowId, id: crypto.randomUUID(), order: { [projectId]:targetRowId?(tasks.find(task=>rowId(task)===targetRowId)?.order[projectId]??tasks.length):tasks.length } }); setNewTaskOutput(""); setEditError("");
+    setEditing({ ...emptyTask(projectId), ...range, type:taskTypeForTrack(tasks,tracks,targetRowId,defaultTaskType), status:statusForRange(range.start,range.end), rowId:targetRowId, id: crypto.randomUUID(), order: { [projectId]:targetRowId?(tasks.find(task=>rowId(task)===targetRowId)?.order[projectId]??tasks.length):tasks.length } }); setNewTaskOutput(""); setEditError("");
     setEditingEdges([]);
   };
   const createAtPoint=(event:React.MouseEvent<HTMLDivElement>)=>{
