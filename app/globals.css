@@ -5,6 +5,9 @@
 
 * { box-sizing:border-box; }
 :root { --agenda-height:36px; --timeline-head-height:96px; }
+.squitle-menu { overflow:hidden; border-radius:var(--radius-md); }
+.squitle-menu img { width:28px;height:28px;image-rendering:pixelated;transform:scale(1);transition:transform var(--motion-fast),filter var(--motion-fast);filter:drop-shadow(0 2px 3px color-mix(in srgb,var(--primary) 30%,transparent)); }
+.squitle-menu:hover img,.squitle-menu:focus-visible img,.squitle-menu[data-popup-open] img { transform:scale(1.12);filter:drop-shadow(0 3px 5px color-mix(in srgb,var(--primary) 50%,transparent)); }
 .timeline-viewport { max-height:calc(100dvh - 176px); min-height:calc(var(--timeline-head-height) + var(--agenda-height)); }
 .timeline-column-divider { position:absolute;right:-4px;top:0;z-index:99;width:8px;height:100%;padding:0;cursor:col-resize;touch-action:none;background:transparent!important; }
 .timeline-column-divider::before { content:"";position:absolute;inset-block:0;left:50%;width:1px;transform:translateX(-50%);background:var(--border);transition:width var(--motion-fast),background-color var(--motion-fast); }
@@ -148,6 +151,8 @@ html[lang="en"] .status-tag { white-space:nowrap; }
 .toolbar { display:flex;align-items:center;justify-content:space-between;gap:var(--space-16);padding:var(--space-16) var(--space-24);flex-wrap:wrap; }
 .toolbar-brand,.toolbar-actions { display:flex;align-items:center;gap:var(--space-12); }
 .toolbar-brand h1 { font-size:var(--font-18);font-weight:600; }
+.toolbar-slogan { pointer-events:none;position:absolute;left:50%;top:50%;max-width:42vw;transform:translate(-50%,-50%);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted-foreground);font-size:var(--font-14);font-weight:500;letter-spacing:-.01em;text-align:center; }
+@media (max-width:1280px) { .toolbar-slogan { display:none; } }
 .date-navigation { display:flex;align-items:center;border:var(--stroke) solid var(--border);border-radius:var(--radius-md);overflow:hidden; }
 .date-navigation button { border:0;border-radius:0;background:transparent;box-shadow:none; }
 .zoom-control [data-state="active"],.zoom-control [aria-selected="true"] { background:var(--segment-active)!important;color:var(--foreground)!important;box-shadow:inset 0 0 0 var(--stroke) var(--segment-border); }

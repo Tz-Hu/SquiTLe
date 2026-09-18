@@ -29,11 +29,33 @@ jobs:
         working-directory: desktop
         run: npx --yes @tauri-apps/cli@^2 build --config src-tauri/tauri.conf.json
 
+      - name: Prepare distributable macOS packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP_PATH="desktop/src-tauri/target/release/bundle/macos/Squitle.app"
+          DIST_DIR="desktop/dist"
+          DMG_STAGE="$(mktemp -d)"
+
+          # Ad-hoc signing keeps the bundle internally consistent. Public
+          # releases can replace this with Developer ID signing/notarization.
+          codesign --force --deep --sign - --timestamp=none "$APP_PATH"
+          codesign --verify --deep --strict --verbose=2 "$APP_PATH"
+
+          mkdir -p "$DIST_DIR"
+          ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" "$DIST_DIR/Squitle.app.zip"
+          ditto "$APP_PATH" "$DMG_STAGE/Squitle.app"
+          ln -s /Applications "$DMG_STAGE/Applications"
+          hdiutil create -volname Squitle -srcfolder "$DMG_STAGE" -ov -format UDZO "$DIST_DIR/Squitle-macOS.dmg"
+
+          cp desktop/INSTALL-macOS.md "$DIST_DIR/README-FIRST.md"
+
       - name: Upload macOS bundles
         uses: actions/upload-artifact@v4
         with:
           name: Squitle-macOS
           path: |
-            desktop/src-tauri/target/release/bundle/macos/*.app
-            desktop/src-tauri/target/release/bundle/dmg/*.dmg
+            desktop/dist/Squitle.app.zip
+            desktop/dist/Squitle-macOS.dmg
+            desktop/dist/README-FIRST.md
           if-no-files-found: error
