@@ -10,7 +10,8 @@ export function nextCustomPresetName(presets:Pick<ColorPreset,"name">[],prefix="
   return `${prefix}#${number}`;
 }
 
-const preset=(id:string,name:string,mode:PresetMode,primary:string,categories:Record<string,string>,table:TableColors):ColorPreset=>({id,name,mode,primary,categories:restoreCategories(categories),table,builtin:true});
+type LegacyTableColors=Omit<TableColors,"projectLine">&Partial<Pick<TableColors,"projectLine">>;
+const preset=(id:string,name:string,mode:PresetMode,primary:string,categories:Record<string,string>,table:LegacyTableColors):ColorPreset=>({id,name,mode,primary,categories:restoreCategories(categories),table:{...table,projectLine:table.projectLine??table.grid},builtin:true});
 export const builtInColorPresets:ColorPreset[]=[
   preset("default-light","预设1","light","#4C7EF3",categoryDefaults,defaultTablePalettes.light),
   preset("nailong","预设2","light","#D59B22",{论文:"#D59B22",实验:"#E8782B",工程:"#719B73",其他:"#9B78B5"},{project:"#F3D66F",task:"#FFF0AB",month:"#F3D66F",date:"#FFF0AB",canvas:"#FFFBEC",add:"#FFF4C6",grid:"#8A6B18"}),
@@ -36,11 +37,13 @@ export function restoreCustomColorPresets(value:unknown):ColorPreset[]{
     if(!raw||typeof raw!=="object")return [];
     const item=raw as Partial<ColorPreset>;
     if(typeof item.id!=="string"||typeof item.name!=="string"||!item.name.trim()||(item.mode!=="light"&&item.mode!=="dark")||!item.categories||!item.table)return [];
+    const mode=item.mode;
     const categoryEntries=Object.entries(item.categories),tableKeys=Object.keys(defaultTablePalettes.light);
-    if(!categoryEntries.length||!categoryEntries.every(([key,color])=>key.trim()&&validColor(color))||!tableKeys.every(key=>validColor(item.table?.[key as keyof TableColors])))return [];
+    const legacyTable=item.table as Partial<TableColors>;
+    if(!categoryEntries.length||!categoryEntries.every(([key,color])=>key.trim()&&validColor(color))||!tableKeys.filter(key=>key!=="projectLine").every(key=>validColor(legacyTable[key as keyof TableColors])))return [];
     const categories=restoreCategories(item.categories);
-    const table=Object.fromEntries(tableKeys.map(key=>[key,item.table![key as keyof TableColors]])) as TableColors;
+    const table=Object.fromEntries(tableKeys.map(key=>[key,validColor(legacyTable[key as keyof TableColors])?legacyTable[key as keyof TableColors]:defaultTablePalettes[mode].projectLine])) as TableColors;
     const primary=validColor(item.primary)?item.primary:Object.values(categories)[0]??categoryDefaults.论文;
-    return [{id:item.id,name:item.name.trim().slice(0,40),mode:item.mode,primary,categories,table}];
+    return [{id:item.id,name:item.name.trim().slice(0,40),mode,primary,categories,table}];
   });
 }
