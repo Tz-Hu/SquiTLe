@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { historyOf, commit, undo, redo } from '../lib/history.ts';
+import { HISTORY_LIMIT, historyOf, commit, undo, redo } from '../lib/history.ts';
 
 test('deleting shared task and relationships is one undoable transaction', () => {
   const original = { tasks: [{id:'a',projects:['p1','p2']},{id:'b',projects:['p1']}], edges:[{source:'a',target:'b'}] };
@@ -22,6 +22,6 @@ test('consecutive edits undo in reverse order; new edits clear redo; no-ops are 
 test('history is bounded and hydration has no undo entries', () => {
   let history = historyOf(0);
   for(let i=0;i<150;i++)history=commit(history,n=>n+1);
-  assert.equal(history.past.length,100);
+  assert.equal(history.past.length,HISTORY_LIMIT);
   assert.deepEqual(historyOf(history.present),{past:[],present:150,future:[]});
 });
