@@ -110,7 +110,11 @@ button:focus-visible,[role="button"]:focus-visible { outline:var(--stroke-select
 .table-month { color:var(--table-month-text); }
 .table-date { color:var(--table-date-text); }
 .project-card { overflow:hidden; }
-.project-card[data-empty="true"][data-collapsed="true"] { padding-block:var(--space-8); }
+.project-card[data-collapsed="true"] { padding-block:1px; }
+.project-card[data-collapsed="true"] .project-name { white-space:nowrap;overflow:hidden;text-overflow:ellipsis;overflow-wrap:normal; }
+.project-card[data-collapsed="true"] .project-meta { display:none; }
+.project-card[data-collapsed="true"] .project-handle { height:20px; }
+.project-card[data-collapsed="true"] .project-actions { top:1px;width:20px;height:20px; }
 .table-project .project-name { font-size:var(--font-13); font-weight:600; line-height:1.45; white-space:normal; overflow-wrap:anywhere; }
 .project-actions { opacity:0;color:var(--text-weak);transition:opacity var(--motion-fast),color var(--motion-fast),background-color var(--motion-fast); }
 .project-handle { opacity:0;transition:opacity var(--motion-fast),color var(--motion-fast); }
