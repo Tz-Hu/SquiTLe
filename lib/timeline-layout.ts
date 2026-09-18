@@ -3,6 +3,7 @@ export const TASK_COLUMN_DEFAULT = 260;
 export const TASK_COLUMN_MIN = 180;
 export const TASK_COLUMN_MAX = 420;
 export const TIMELINE_VISIBLE_MIN = 320;
+export const COLLAPSED_PROJECT_HEIGHT = 22;
 
 export function clampTaskColumnWidth(width: number, viewportWidth: number) {
   const availableMax = Math.max(
