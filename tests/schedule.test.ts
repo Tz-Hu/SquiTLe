@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { transferTask, relatedDepths, hasCycle, type Task, type Dependency } from '../lib/schedule.ts';
+import { appendDependencyOutput, dependencyIsCompleted, dependencyOutputs, pruneDependencyOutputs, transferTask, relatedDepths, hasCycle, type Task, type Dependency } from '../lib/schedule.ts';
 
 const task = (id: string, project: string, order = 0): Task => ({ id, title: id, projectIds: [project], order: { [project]: order }, type: '实验', start: '2026-09-01', end: '2026-09-12', status: '未开始' });
 const edge = (source: string, target: string): Dependency => ({ id: source+target, source: { taskId: source, day: 3, side: 'bottom' }, target: { taskId: target, day: 4, side: 'top' } });
@@ -31,4 +31,20 @@ test('multi-input/output traversal fades by distance without including siblings;
   assert.equal(relatedDepths('c',edges).has('d'),false);
   assert.equal(hasCycle(edges),false); assert.equal(hasCycle([...edges,edge('e','a')]),true);
   assert.equal(relatedDepths('a',[...edges,edge('e','a')]).get('a'),0);
+});
+test('dependency outputs reference stable source output ids',()=>{
+  const tasks=[task('a','p1'),task('b','p1')];
+  const edges=[edge('a','b')];
+  const appended=appendDependencyOutput(tasks,edges,'ab','Dataset ready','output-1');
+  assert.deepEqual(appended.tasks[0].outputs,[{id:'output-1',text:'Dataset ready'}]);
+  assert.deepEqual(appended.edges[0].outputIds,['output-1']);
+  const renamed={...appended.tasks[0],outputs:[{id:'output-1',text:'Clean dataset ready'}]};
+  assert.equal(renamed.outputs?.[0].id,appended.edges[0].outputIds?.[0]);
+  assert.deepEqual(dependencyOutputs(appended.edges[0],renamed),[{id:'output-1',text:'Clean dataset ready',number:1}]);
+  assert.deepEqual(pruneDependencyOutputs(appended.edges,'a',[])[0].outputIds,[]);
+});
+test('a dependency follows the completion state of its successor',()=>{
+  const tasks=[task('a','p1'),{...task('b','p1'),status:'已完成' as const}];
+  assert.equal(dependencyIsCompleted(edge('a','b'),tasks),true);
+  assert.equal(dependencyIsCompleted(edge('b','a'),tasks),false);
 });
