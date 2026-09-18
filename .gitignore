@@ -21,6 +21,7 @@
 # misc
 .DS_Store
 *.pem
+*.tsbuildinfo
 
 # debug
 npm-debug.log*
@@ -37,6 +38,9 @@ yarn-error.log*
 # typescript
 next-env.d.ts
 /dist/
+/desktop/src-tauri/target/
+/desktop/dist-ui/
+/desktop/dist/
 /.wrangler/
 # Checkout-local execution profile and tool state; never publish them.
 /.sites-runtime/

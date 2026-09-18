@@ -3,8 +3,6 @@ name: Build Squitle for macOS
 on:
   workflow_dispatch:
   push:
-    branches:
-      - main
     tags:
       - "desktop-v*"
 
@@ -12,13 +10,23 @@ jobs:
   build-macos:
     runs-on: macos-latest
     permissions:
-      contents: read
+      contents: write
     steps:
       - name: Check out source
         uses: actions/checkout@v4
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.25.0
+
+      - name: Install web dependencies
+        run: pnpm install --frozen-lockfile
 
       - name: Cache Rust build
         uses: swatinem/rust-cache@v2
@@ -27,13 +35,17 @@ jobs:
 
       - name: Build Squitle
         working-directory: desktop
-        run: npx --yes @tauri-apps/cli@^2 build --config src-tauri/tauri.conf.json
+        env:
+          SQUITLE_UPDATER_PUBLIC_KEY: ${{ secrets.SQUITLE_UPDATER_PUBLIC_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: npx --yes @tauri-apps/cli@^2 build --target universal-apple-darwin --config src-tauri/tauri.conf.json
 
       - name: Prepare distributable macOS packages
         shell: bash
         run: |
           set -euo pipefail
-          APP_PATH="desktop/src-tauri/target/release/bundle/macos/Squitle.app"
+          APP_PATH="desktop/src-tauri/target/universal-apple-darwin/release/bundle/macos/Squitle.app"
           DIST_DIR="desktop/dist"
           DMG_STAGE="$(mktemp -d)"
 
@@ -58,4 +70,23 @@ jobs:
             desktop/dist/Squitle.app.zip
             desktop/dist/Squitle-macOS.dmg
             desktop/dist/README-FIRST.md
+            desktop/src-tauri/target/universal-apple-darwin/release/bundle/macos/*.app.tar.gz
+            desktop/src-tauri/target/universal-apple-darwin/release/bundle/macos/*.app.tar.gz.sig
           if-no-files-found: error
+
+      - name: Publish signed update feed
+        if: startsWith(github.ref, 'refs/tags/desktop-v')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#desktop-v}"
+          BUNDLE_DIR="desktop/src-tauri/target/universal-apple-darwin/release/bundle/macos"
+          UPDATE_ARCHIVE="$(find "$BUNDLE_DIR" -maxdepth 1 -name '*.app.tar.gz' -print -quit)"
+          UPDATE_SIGNATURE="$(cat "${UPDATE_ARCHIVE}.sig")"
+          cp "$UPDATE_ARCHIVE" desktop/dist/Squitle.app.tar.gz
+          cp "${UPDATE_ARCHIVE}.sig" desktop/dist/Squitle.app.tar.gz.sig
+          node .github/scripts/create-updater-json.mjs "$VERSION" "$TAG" "$UPDATE_SIGNATURE" > desktop/dist/latest.json
+          gh release create "$TAG" desktop/dist/Squitle-macOS.dmg desktop/dist/Squitle.app.zip desktop/dist/Squitle.app.tar.gz desktop/dist/Squitle.app.tar.gz.sig desktop/dist/latest.json --title "Squitle $VERSION" --notes "Squitle macOS $VERSION"
