@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {moveRow,moveItem,insertItemRow,rowId,hasItemOverlap} from '../lib/rows.ts';
+import {moveRow,moveItem,insertItemRow,rowId,hasItemOverlap,canPlaceItem} from '../lib/rows.ts';
 import type {Task} from '../lib/schedule.ts';
 const task=(id:string,row:string,project='p1',order=0):Task=>({id,rowId:row,projectIds:[project],order:{[project]:order},title:id,type:'实验',start:'2026-08-06',end:'2026-08-10',status:'未开始'});
 test('overlap applies only to ordinary tasks sharing a row and project, with inclusive dates',()=>{
@@ -11,6 +11,11 @@ test('overlap applies only to ordinary tasks sharing a row and project, with inc
  assert.equal(hasItemOverlap([first,{...second,projectIds:['p2']}],'a'),false);
  assert.equal(hasItemOverlap([first,{...second,milestone:true}],'a'),false);
  assert.equal(hasItemOverlap([{...first,milestone:true},second],'a'),false);
+});
+test('the overlap setting governs every placement check',()=>{
+ const items=[task('a','r1'),{...task('b','r1'),start:'2026-08-08',end:'2026-08-12'}];
+ assert.equal(canPlaceItem(items,'a',false),false);
+ assert.equal(canPlaceItem(items,'a',true),true);
 });
 test('whole row moves every occurrence together across projects without copying identities',()=>{
  const original=[task('a','r1'),task('b','r1'),task('c','r2','p1',1),task('d','r3','p2')];

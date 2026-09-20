@@ -26,7 +26,7 @@ import { createPortal, flushSync } from "react-dom";
 import { panViewport, windowScrollLimit } from "@/lib/pan";
 import { defaultTablePalettes, migrateTablePalettes, tableColorLabels, tableTextColor, type TableColors, type TablePalettes } from "@/lib/table-colors";
 import { categoryDefaults, WORK_TYPE_CATALOG_VERSION, layoutTokens, taskBounds, appearanceFields, appearancePresetValues, snapAppearanceValue, defaultAppearance, restoreAppearance, restoreCategories, migrateCategoryCatalog } from "@/lib/appearance";
-import { moveRow, moveItem, insertItemRow, rowId, hasItemOverlap } from "@/lib/rows";
+import { moveRow, moveItem, insertItemRow, rowId, canPlaceItem } from "@/lib/rows";
 import { ManualDateField } from "@/components/manual-date-field";
 import { expandedInset, foldedSide, portOffset, visiblePortDays, taskBarWidth } from "@/lib/task-presentation";
 import { ExpandingTaskLabel } from "@/components/expanding-task-label";
@@ -40,7 +40,7 @@ import {Tooltip,TooltipProvider,TooltipTrigger,TooltipContent} from "@/component
 import {advanceScheduleDocument,backupFilename, createBackup, CURRENT_DATA_VERSION, loadScheduleDocument, migratePersistedState, parseBackup, type PersistedState,type ScheduleDocument} from "@/lib/persistence";
 import {extractMemoLinks} from "@/lib/memo-links";
 import {clampSettingsNavWidth,SETTINGS_NAV_MAX,SETTINGS_NAV_MIN} from "@/lib/settings-layout";
-import {clampTaskColumnWidth,COLLAPSED_PROJECT_HEIGHT,PROJECT_COLUMN_WIDTH,TASK_COLUMN_DEFAULT,TASK_COLUMN_MAX,TASK_COLUMN_MIN} from "@/lib/timeline-layout";
+import {clampTaskColumnWidth,collapsedSummaryBounds,COLLAPSED_PROJECT_HEIGHT,PROJECT_COLUMN_WIDTH,TASK_COLUMN_DEFAULT,TASK_COLUMN_MAX,TASK_COLUMN_MIN} from "@/lib/timeline-layout";
 import {deleteWorkType,renameWorkType,renameWorkTypeColorMap} from "@/lib/work-types";
 import {reconcileTracks,taskTypeForTrack,tracksFromTasks,type TaskTrack} from "@/lib/tracks";
 import {createScheduleStorage,getOrCreateDeviceId,isDesktopRuntime,LEGACY_DOCUMENT_BACKUP_KEY,saveDesktopJson,type ScheduleStorage} from "@/lib/storage";
@@ -166,10 +166,10 @@ type Schedule = { projects: Project[]; tasks: Task[]; edges: Dependency[]; track
 type PersonalDefaults=Partial<{
   general:{editorMode:"panel"|"dialog";wordingStyle:"default"|"humorous"};
   timeline:{weekStart:0|1;dayWidth:number;timelineRowHeight:number;insertionDelay:number;weekends:boolean;weekBoundaries:boolean};
-  tasks:{defaultDays:number;defaultTaskType:TaskType;hoverSpeed:"fast"|"medium"|"slow";taskHoverHints:boolean;completedMode:"fade"|"normal"|"hide";barHeight:number;barRadius:number;barFill:number;completedOpacity:number};
+  tasks:{defaultDays:number;defaultTaskType:TaskType;allowTaskOverlap:boolean;hoverSpeed:"fast"|"medium"|"slow";taskHoverHints:boolean;completedMode:"fade"|"normal"|"hide";barHeight:number;barRadius:number;barFill:number;completedOpacity:number};
   links:{handleGap:number;handleWidth:number;autoConnectionSides:boolean;lineOpacity:number;edgeLevel:EdgeLevel;arrowLevel:ArrowLevel};
   inbox:{inboxKind:InboxKind;inboxCompleted:"show"|"hide"};
-  appearance:{theme:"light"|"dark"|"system";primaryColor:string;colors:Record<string,string>;tablePalettes:TablePalettes};
+  appearance:{theme:"light"|"dark"|"system";primaryColor:string;collapsedProjectColor:string;colors:Record<string,string>;tablePalettes:TablePalettes};
 }>;
 const nearestPreset=(value:number,options:readonly number[])=>options.reduce((nearest,option)=>Math.abs(option-value)<Math.abs(nearest-value)?option:nearest,options[0]);
 const appearancePresetLabels:Record<keyof typeof appearancePresetValues,Array<[string,number]>>={
@@ -273,6 +273,7 @@ function TimelineApp() {
   };
   const [theme,setTheme]=useState<"light"|"dark"|"system">("system");
   const [primaryColor,setPrimaryColor]=useState("#4C7EF3");
+  const [collapsedProjectColor,setCollapsedProjectColor]=useState(categoryDefaults.整理);
   const [colors,setColors]=useState<Record<string,string>>(categoryDefaults);
   const workTypes=Object.keys(colors);
   const fallbackType=workTypes[0]??"整理";
@@ -283,6 +284,7 @@ function TimelineApp() {
   const [dayWidth,setDayWidth]=useState(54);
   const [weekStart,setWeekStart]=useState<0|1>(1);
   const [defaultTaskType,setDefaultTaskType]=useState<TaskType>("算法/仿真");
+  const [allowTaskOverlap,setAllowTaskOverlap]=useState(false);
   const [hoverSpeed,setHoverSpeed]=useState<"fast"|"medium"|"slow">("medium");
   const [taskHoverHints,setTaskHoverHints]=useState(true);
   const [completedMode,setCompletedMode]=useState<"fade"|"normal"|"hide">("fade");
@@ -291,6 +293,7 @@ function TimelineApp() {
   const [inboxCompleted,setInboxCompleted]=useState<"show"|"hide">("show");
   const [inboxSize,setInboxSize]=useState({width:320,height:280});
   const {top:barTop,bottom:barBottom}=taskBounds(appearance.barHeight,timelineRowHeight);
+  const {top:summaryBarTop,bottom:summaryBarBottom,height:summaryBarHeight}=collapsedSummaryBounds(appearance.barHeight);
   useEffect(()=>{
     const root=document.documentElement;
     root.style.setProperty("--bar-height",appearance.barHeight+"px");
@@ -423,6 +426,7 @@ function TimelineApp() {
         if(["light","dark","system"].includes(state.theme))setTheme(state.theme);
         setTablePalettes(migrateTablePalettes(state.tablePalettes,state.paletteVersion));
         if(typeof state.primaryColor==="string"&&/^#[0-9a-f]{6}$/i.test(state.primaryColor))setPrimaryColor(state.primaryColor);
+        if(typeof state.collapsedProjectColor==="string"&&/^#[0-9a-f]{6}$/i.test(state.collapsedProjectColor))setCollapsedProjectColor(state.collapsedProjectColor);
         setColors(restoredColors);
         setCustomColorPresets(restoreCustomColorPresets(state.customColorPresets));
         setAppearance(restoreAppearance(state.appearance));
@@ -437,6 +441,7 @@ function TimelineApp() {
         if(Number.isFinite(state.dayWidth))setDayWidth(nearestPreset(state.dayWidth,[36,54,68,80]));
         if(state.weekStart===0||state.weekStart===1)setWeekStart(state.weekStart);
         if(typeof state.defaultTaskType==="string"&&restoredColors[state.defaultTaskType])setDefaultTaskType(state.defaultTaskType);else setDefaultTaskType(Object.keys(restoredColors)[0]);
+        if(typeof state.allowTaskOverlap==="boolean")setAllowTaskOverlap(state.allowTaskOverlap);
         if(["fast","medium","slow"].includes(state.hoverSpeed))setHoverSpeed(state.hoverSpeed);
         if(typeof state.taskHoverHints==="boolean")setTaskHoverHints(state.taskHoverHints);
         if(["fade","normal","hide"].includes(state.completedMode))setCompletedMode(state.completedMode);
@@ -490,7 +495,7 @@ function TimelineApp() {
     })();
     return()=>{active=false;};
   }, []);
-  const persistedState={ dataVersion:CURRENT_DATA_VERSION, workTypeCatalogVersion:WORK_TYPE_CATALOG_VERSION, projects, tasks, edges, tracks, inbox, inboxKind, inboxSort, inboxCollapsed, collapsed: [...collapsedProjects], defaultDays, autoConnectionSides, handleWidth, handleGap, edgeLevel, arrowLevel, personalDefaults, theme, primaryColor, tablePalettes, paletteVersion:2, categoryColors:colors, customColorPresets, appearance, editorMode, settingsWidth, timelineRowHeight, dayWidth, weekStart, defaultTaskType, hoverSpeed, taskHoverHints, completedMode, insertionDelay, wordingStyle, inboxCompleted, inboxSize };
+  const persistedState={ dataVersion:CURRENT_DATA_VERSION, workTypeCatalogVersion:WORK_TYPE_CATALOG_VERSION, projects, tasks, edges, tracks, inbox, inboxKind, inboxSort, inboxCollapsed, collapsed: [...collapsedProjects], defaultDays, allowTaskOverlap, autoConnectionSides, handleWidth, handleGap, edgeLevel, arrowLevel, personalDefaults, theme, primaryColor, collapsedProjectColor, tablePalettes, paletteVersion:2, categoryColors:colors, customColorPresets, appearance, editorMode, settingsWidth, timelineRowHeight, dayWidth, weekStart, defaultTaskType, hoverSpeed, taskHoverHints, completedMode, insertionDelay, wordingStyle, inboxCompleted, inboxSize };
   useEffect(() => {
     if (!ready) return;
     const storage=scheduleStorageRef.current;
@@ -502,7 +507,7 @@ function TimelineApp() {
       await storage.save(next,previous?String(previous.revision):undefined);
       scheduleDocumentRef.current=next;
     }).catch(()=>setNotice(desktop?"应用未能保存本地文档，请检查磁盘权限。":"浏览器未能保存，请检查存储空间。"));
-  }, [projects, tasks, edges, tracks, inbox, inboxKind, inboxSort, inboxCollapsed, collapsedProjects, defaultDays, autoConnectionSides, handleWidth, handleGap, edgeLevel, arrowLevel, personalDefaults, theme, primaryColor, tablePalettes, colors, customColorPresets, appearance, editorMode, settingsWidth, timelineRowHeight, dayWidth, weekStart, defaultTaskType, hoverSpeed, taskHoverHints, completedMode, insertionDelay, wordingStyle, inboxCompleted, inboxSize, ready]);
+  }, [projects, tasks, edges, tracks, inbox, inboxKind, inboxSort, inboxCollapsed, collapsedProjects, defaultDays, allowTaskOverlap, autoConnectionSides, handleWidth, handleGap, edgeLevel, arrowLevel, personalDefaults, theme, primaryColor, collapsedProjectColor, tablePalettes, colors, customColorPresets, appearance, editorMode, settingsWidth, timelineRowHeight, dayWidth, weekStart, defaultTaskType, hoverSpeed, taskHoverHints, completedMode, insertionDelay, wordingStyle, inboxCompleted, inboxSize, ready]);
   useEffect(() => {
     const context = (document as unknown as { modelContext?: { registerTool: (tool: unknown, options?: { signal?: AbortSignal }) => void | Promise<void> } }).modelContext;
     if (!context?.registerTool) return;
@@ -756,7 +761,11 @@ function TimelineApp() {
     const normalized = { ...editing, outputs, title: editing.title.trim() || t("未命名"), end: editing.end < editing.start ? editing.start : editing.end };
     const allEdges = pruneDependencyOutputs([...edges.filter(edge => edge.source.taskId !== editing.id && edge.target.taskId !== editing.id), ...editingEdges],editing.id,outputs);
     if (hasCycle(allEdges)) { setEditError("这些关系会形成循环依赖，请调整前置或后接任务。"); return; }
-    changeSchedule(current => ({ ...current, tasks: current.tasks.some(task => task.id === normalized.id) ? current.tasks.map(task => task.id === normalized.id ? normalized : task) : [...current.tasks, normalized], edges: allEdges }));
+    const previous=tasks.find(task=>task.id===normalized.id);
+    const nextTasks=tasks.some(task=>task.id===normalized.id)?tasks.map(task=>task.id===normalized.id?normalized:task):[...tasks,normalized];
+    const placementChanged=!previous||previous.start!==normalized.start||previous.end!==normalized.end||rowId(previous)!==rowId(normalized)||JSON.stringify(previous.projectIds)!==JSON.stringify(normalized.projectIds);
+    if(placementChanged&&!canPlaceItem(nextTasks,normalized.id,allowTaskOverlap)){setEditError("该事项与同轨道中的其他事项时间重叠。");return;}
+    changeSchedule(current => ({ ...current, tasks: nextTasks, edges: allEdges }));
     setEditing(null); setEditingEdges([]); setNewTaskOutput(""); setEditError("");
   };
   const saveProject = () => {
@@ -847,7 +856,7 @@ function TimelineApp() {
     }
     if(cells)items=items.map(t=>t.id===task.id?shiftTask(t,cells*stepDays):t);
     if(items!==tasks){
-      if(hasItemOverlap(items,task.id))setNotice("该位置与其他事项重叠，已回到原位。");
+      if(!canPlaceItem(items,task.id,allowTaskOverlap))setNotice("该位置与其他事项重叠，已回到原位。");
       else changeSchedule(current=>({...current,tasks:items}));
     }
     clearInsertion();
@@ -875,7 +884,11 @@ function TimelineApp() {
     const snappedDays = Math.round(distance / cellWidth) * stepDays;
     const durationDays = differenceInCalendarDays(new Date(task.end + "T00:00:00"), new Date(task.start + "T00:00:00"));
     const days = resize.edge === "start" ? Math.min(snappedDays, durationDays) : Math.max(snappedDays, -durationDays);
-    if (days) changeSchedule(current => ({ ...current, tasks: current.tasks.map(item => item.id !== task.id ? item : resize.edge === "start" ? { ...item, start: iso(addDays(new Date(item.start + "T00:00:00"), days)) } : { ...item, end: iso(addDays(new Date(item.end + "T00:00:00"), days)) }) }));
+    if(days){
+      const nextTasks=tasks.map(item=>item.id!==task.id?item:resize.edge==="start"?{...item,start:iso(addDays(new Date(item.start+"T00:00:00"),days))}:{...item,end:iso(addDays(new Date(item.end+"T00:00:00"),days))});
+      if(!canPlaceItem(nextTasks,task.id,allowTaskOverlap))setNotice("该位置与其他事项重叠，已回到原位。");
+      else changeSchedule(current=>({...current,tasks:nextTasks}));
+    }
     if (resize.moved || Math.abs(distance) > 4) {
       suppressEdit.current = task.id;
       window.setTimeout(() => { if (suppressEdit.current === task.id) suppressEdit.current = null; }, 0);
@@ -1006,7 +1019,7 @@ function TimelineApp() {
   const connections = useMemo(() => {
     const geometry = (row: VisibleRow, taskId?:string) => row.kind === "task" ? displayGeometry(row.tasks.find(task=>task.id===taskId)??row.task) : row.kind === "summary" ? taskGeometry(summaryTask(row)) : { left: 0, width: 0 };
     const clearance = layoutTokens.routeClearance;
-    const obstacles=visibleRows.flatMap((row,i)=>row.kind==="task"?row.tasks.map(task=>{const g=displayGeometry(task);return {left:g.left-clearance,right:g.left+g.width+clearance,top:rowTops[i]+barTop-clearance+dragOffset(task.id),bottom:rowTops[i]+barBottom+clearance+dragOffset(task.id)};}):row.kind==="summary"?[{left:geometry(row).left-clearance,right:geometry(row).left+geometry(row).width+clearance,top:rowTops[i]+barTop-clearance,bottom:rowTops[i]+barBottom+clearance}]:[]);
+    const obstacles=visibleRows.flatMap((row,i)=>row.kind==="task"?row.tasks.map(task=>{const g=displayGeometry(task);return {left:g.left-clearance,right:g.left+g.width+clearance,top:rowTops[i]+barTop-clearance+dragOffset(task.id),bottom:rowTops[i]+barBottom+clearance+dragOffset(task.id)};}):row.kind==="summary"?[{left:geometry(row).left-clearance,right:geometry(row).left+geometry(row).width+clearance,top:rowTops[i]+summaryBarTop-clearance,bottom:rowTops[i]+summaryBarBottom+clearance}]:[]);
     const rowsFor = (id: string) => visibleRows.flatMap((row, i) => (row.kind === "task" ? row.tasks.some(task=>task.id===id) : row.kind === "summary" && row.tasks.some(t => t.id === id)) ? [i] : []);
     const pointFor = (port: Port, rowIndex: number) => {
       const row = visibleRows[rowIndex]; const g = geometry(row,port.taskId);
@@ -1014,7 +1027,8 @@ function TimelineApp() {
       const original = tasks.find(t => t.id === port.taskId);
       const days = task && original ? differenceInCalendarDays(new Date(portDate(port, original) + "T00:00:00"), new Date(task.start + "T00:00:00")) : 0;
       const x = g.left + portOffset(days,cellWidth/stepDays,g.width,task?.milestone);
-      const y = rowTops[rowIndex] + (port.side === "top" ? barTop : barBottom)+dragOffset(port.taskId);
+      const bounds=row.kind==="summary"?{top:summaryBarTop,bottom:summaryBarBottom}:{top:barTop,bottom:barBottom};
+      const y = rowTops[rowIndex] + bounds[port.side]+dragOffset(port.taskId);
       return { x, y };
     };
     const previousCache=connectionCache.current;
@@ -1049,7 +1063,7 @@ function TimelineApp() {
     });
     connectionCache.current=nextCache;
     return renderedConnections;
-  }, [visibleRows, tasks, edges, drag, resize, anchor, cellWidth, stepDays, autoConnectionSides, scrollOffset, barTop, barBottom, rowTops, arrowSize, timelineRowHeight]);
+  }, [visibleRows, tasks, edges, drag, resize, anchor, cellWidth, stepDays, autoConnectionSides, scrollOffset, barTop, barBottom, summaryBarTop, summaryBarBottom, rowTops, arrowSize, timelineRowHeight]);
   const focusTask=hoveredTask??selectedTask;
   const depths = useMemo(() => relatedDepths(focusTask, edges), [focusTask, edges]);
   const highlight = (id: string) => {
@@ -1227,11 +1241,12 @@ function TimelineApp() {
     const outsideTo=target?{x:to.x,y:to.y+(target.side==="top"?-clearance:clearance)}:to;
     const obstacles=visibleRows.flatMap((row,i)=>{
       const items=row.kind==="task"?row.tasks:row.kind==="summary"?[summaryTask(row)]:[];
-      return items.map(task=>{const g=taskGeometry(task);return {left:g.left-clearance,right:g.left+g.width+clearance,top:rowTops[i]+barTop-clearance,bottom:rowTops[i]+barBottom+clearance};});
+      const bounds=row.kind==="summary"?{top:summaryBarTop,bottom:summaryBarBottom}:{top:barTop,bottom:barBottom};
+      return items.map(task=>{const g=taskGeometry(task);return {left:g.left-clearance,right:g.left+g.width+clearance,top:rowTops[i]+bounds.top-clearance,bottom:rowTops[i]+bounds.bottom+clearance};});
     });
     const nearbyObstacles=obstaclesNearRoute(outsideFrom,outsideTo,obstacles,Math.max(cellWidth*2,timelineRowHeight*2));
     return smoothRoute([from,...routeAroundTasks(outsideFrom,outsideTo,nearbyObstacles),to],layoutTokens.cornerRadius,arrowSize);
-  },[linkPreview,visibleRows,anchor,cellWidth,stepDays,barTop,barBottom,arrowSize,rowTops,timelineRowHeight]);
+  },[linkPreview,visibleRows,anchor,cellWidth,stepDays,barTop,barBottom,summaryBarTop,summaryBarBottom,arrowSize,rowTops,timelineRowHeight]);
 
   const relationEditor = (direction: "source" | "target") => {
     if (!editing) return null;
@@ -1319,7 +1334,11 @@ function TimelineApp() {
     setInboxDrop(null);setInboxDragging(null);clearInsertion();
     if(!id)return;
     const item=todoItems.find(entry=>entry.id===id);if(!item)return;
-    changeSchedule(current=>item.taskId?{...current,tasks:current.tasks.map(task=>task.id!==item.taskId?task:shiftTask(task,differenceInCalendarDays(new Date(date+"T00:00:00"),new Date(task.start+"T00:00:00"))))}:{...current,inbox:current.inbox.map(entry=>entry.id===id?{...entry,date}:entry)});
+    if(item.taskId){
+      const nextTasks=tasks.map(task=>task.id!==item.taskId?task:shiftTask(task,differenceInCalendarDays(new Date(date+"T00:00:00"),new Date(task.start+"T00:00:00"))));
+      if(!canPlaceItem(nextTasks,item.taskId,allowTaskOverlap)){setNotice("该位置与其他事项重叠，已回到原位。");return;}
+      changeSchedule(current=>({...current,tasks:nextTasks}));
+    }else changeSchedule(current=>({...current,inbox:current.inbox.map(entry=>entry.id===id?{...entry,date}:entry)}));
     setNotice("已加入当日待办。Ctrl+Z 可撤销。");
   };
   const placeTodoInTimeline=(id:string,date:string,target:Extract<VisibleRow,{kind:"task"}>|null,slot:Insertion|null)=>{
@@ -1335,7 +1354,7 @@ function TimelineApp() {
       nextTasks=[...nextTasks,task];nextInbox=nextInbox.filter(entry=>entry.id!==item.id);
     }
     nextTasks=slot?.phase==="ready"?insertItemRow(nextTasks,taskId,projectId,slot.before,crypto.randomUUID()):moveItem(nextTasks,taskId,projectId,target?.task);
-    if(hasItemOverlap(nextTasks,taskId)){setNotice("该位置与其他事项重叠，已回到原位。");return;}
+    if(!canPlaceItem(nextTasks,taskId,allowTaskOverlap)){setNotice("该位置与其他事项重叠，已回到原位。");return;}
     changeSchedule(current=>({...current,tasks:nextTasks,inbox:nextInbox}));
     setNotice(slot?.phase==="ready"?"已在新行建立一日事项。Ctrl+Z 可撤销。":"已在该行建立一日事项。Ctrl+Z 可撤销。");
   };
@@ -1420,13 +1439,13 @@ function TimelineApp() {
   const resetSettings=(category= settingsCategory)=>{
     if(category==="general"){const d=personalDefaults.general;setEditorMode(d?.editorMode??"panel");setWordingStyle(d?.wordingStyle??"default");}
     if(category==="timeline"){const d=personalDefaults.timeline;setWeekStart(d?.weekStart??1);setDayWidth(nearestPreset(d?.dayWidth??54,[36,54,68,80]));setTimelineRowHeight(nearestPreset(d?.timelineRowHeight??64,[48,64,76,88]));setInsertionDelay(nearestPreset(d?.insertionDelay??300,[150,300,600]));setAppearance(current=>({...current,weekends:d?.weekends??true,weekBoundaries:d?.weekBoundaries??true}));}
-    if(category==="tasks"){const d=personalDefaults.tasks;setDefaultDays(d?.defaultDays??4);setDefaultTaskType(d?.defaultTaskType&&colors[d.defaultTaskType]?d.defaultTaskType:fallbackType);setHoverSpeed(d?.hoverSpeed??"medium");setTaskHoverHints(d?.taskHoverHints??true);setCompletedMode(d?.completedMode??"fade");setAppearance(current=>({...current,barHeight:snapAppearanceValue("barHeight",d?.barHeight??24),barRadius:snapAppearanceValue("barRadius",d?.barRadius??4),barFill:snapAppearanceValue("barFill",d?.barFill??16),completedOpacity:snapAppearanceValue("completedOpacity",d?.completedOpacity??55)}));}
+    if(category==="tasks"){const d=personalDefaults.tasks;setDefaultDays(d?.defaultDays??4);setDefaultTaskType(d?.defaultTaskType&&colors[d.defaultTaskType]?d.defaultTaskType:fallbackType);setAllowTaskOverlap(d?.allowTaskOverlap??false);setHoverSpeed(d?.hoverSpeed??"medium");setTaskHoverHints(d?.taskHoverHints??true);setCompletedMode(d?.completedMode??"fade");setAppearance(current=>({...current,barHeight:snapAppearanceValue("barHeight",d?.barHeight??24),barRadius:snapAppearanceValue("barRadius",d?.barRadius??4),barFill:snapAppearanceValue("barFill",d?.barFill??16),completedOpacity:snapAppearanceValue("completedOpacity",d?.completedOpacity??55)}));}
     if(category==="links"){const d=personalDefaults.links;setHandleGap(nearestPreset(d?.handleGap??4,[2,4,8,12]));setHandleWidth(nearestPreset(d?.handleWidth??6,[4,6,8,10]));setAutoConnectionSides(d?.autoConnectionSides??true);setEdgeLevel(d?.edgeLevel??"regular");setArrowLevel(d?.arrowLevel??"regular");setAppearance(current=>({...current,lineOpacity:snapAppearanceValue("lineOpacity",d?.lineOpacity??22)}));}
     if(category==="inbox"){const d=personalDefaults.inbox;setInboxKind(d?.inboxKind??"checklist");setInboxCompleted(d?.inboxCompleted??"show");}
-    if(category==="appearance"){const d=personalDefaults.appearance;setTheme(d?.theme??"system");setPrimaryColor(d?.primaryColor??"#4C7EF3");setColors(d?.colors?restoreCategories(d.colors):categoryDefaults);setTablePalettes(d?.tablePalettes?migrateTablePalettes(d.tablePalettes,2):defaultTablePalettes);}
+    if(category==="appearance"){const d=personalDefaults.appearance;setTheme(d?.theme??"system");setPrimaryColor(d?.primaryColor??"#4C7EF3");setCollapsedProjectColor(d?.collapsedProjectColor??categoryDefaults.整理);setColors(d?.colors?restoreCategories(d.colors):categoryDefaults);setTablePalettes(d?.tablePalettes?migrateTablePalettes(d.tablePalettes,2):defaultTablePalettes);}
   };
   const saveCategoryDefault=()=>{
-    const value=settingsCategory==="general"?{editorMode,wordingStyle}:settingsCategory==="timeline"?{weekStart,dayWidth,timelineRowHeight,insertionDelay,weekends:appearance.weekends,weekBoundaries:appearance.weekBoundaries}:settingsCategory==="tasks"?{defaultDays,defaultTaskType,hoverSpeed,taskHoverHints,completedMode,barHeight:appearance.barHeight,barRadius:appearance.barRadius,barFill:appearance.barFill,completedOpacity:appearance.completedOpacity}:settingsCategory==="links"?{handleGap,handleWidth,autoConnectionSides,lineOpacity:appearance.lineOpacity,edgeLevel,arrowLevel}:settingsCategory==="inbox"?{inboxKind,inboxCompleted}:{theme,primaryColor,colors:{...colors},tablePalettes:structuredClone(tablePalettes)};
+    const value=settingsCategory==="general"?{editorMode,wordingStyle}:settingsCategory==="timeline"?{weekStart,dayWidth,timelineRowHeight,insertionDelay,weekends:appearance.weekends,weekBoundaries:appearance.weekBoundaries}:settingsCategory==="tasks"?{defaultDays,defaultTaskType,allowTaskOverlap,hoverSpeed,taskHoverHints,completedMode,barHeight:appearance.barHeight,barRadius:appearance.barRadius,barFill:appearance.barFill,completedOpacity:appearance.completedOpacity}:settingsCategory==="links"?{handleGap,handleWidth,autoConnectionSides,lineOpacity:appearance.lineOpacity,edgeLevel,arrowLevel}:settingsCategory==="inbox"?{inboxKind,inboxCompleted}:{theme,primaryColor,collapsedProjectColor,colors:{...colors},tablePalettes:structuredClone(tablePalettes)};
     setPersonalDefaults(current=>({...current,[settingsCategory]:value} as PersonalDefaults));setNotice("当前选项已设为个人默认。");
   };
   const applyColorPreset=(preset:ColorPreset)=>{setPrimaryColor(preset.primary);setColors(current=>{const palette=Object.values(preset.categories);return Object.fromEntries(Object.keys(current).map((name,index)=>[name,preset.categories[name]??palette[index%palette.length]??fallbackColor]));});setTablePalettes(current=>({...current,[preset.mode]:{...preset.table}}));if(theme!==preset.mode)setTheme(preset.mode);};
@@ -1588,7 +1607,7 @@ function TimelineApp() {
             const key=row.kind==="task"?rowId(row.task):row.kind+row.project.id;
             const projectEnd=visibleRows[index+1]?.project.id!==row.project.id;
             return <div key={row.project.id+key} data-row-key={"timeline-"+key} onDoubleClick={event=>{if(row.kind==="add")event.stopPropagation();}} className="schedule-row task-interaction-row absolute left-0 w-full border-b border-[var(--border)]" style={{top:rowTops[index],height:rowHeight(row),transition:"height 180ms ease",backgroundColor:row.kind==="add"?"var(--table-add)":row.kind==="task"&&rowDrag&&rowId(row.task)===rowId(tasks.find(task=>task.id===rowDrag.taskId)??row.task)?"var(--accent)":undefined,borderBottomColor:projectEnd?"var(--table-projectLine)":undefined}}>
-              {row.kind==="insert" ? <div className="insertion-slot h-full" aria-label={row.phase==="ready" ? t("松开放入新行") : t("正在展开新行")}/> : row.kind==="task" ? row.tasks.map(task=><div key={task.id} className="task-instance contents">{renderTask(task)}</div>) : row.kind==="summary" ? (()=>{const task=summaryTask(row),g=taskGeometry(task);return <button onClick={()=>toggleProject(row.project.id)} className="task-body absolute px-2" style={{left:g.left,width:g.width,top:barTop,height:appearance.barHeight,"--task-color":fallbackColor} as React.CSSProperties}>{t(row.project.name)} · {row.tasks.length} {" "}{t("项")}</button>;})() : null}
+              {row.kind==="insert" ? <div className="insertion-slot h-full" aria-label={row.phase==="ready" ? t("松开放入新行") : t("正在展开新行")}/> : row.kind==="task" ? row.tasks.map(task=><div key={task.id} className="task-instance contents">{renderTask(task)}</div>) : row.kind==="summary" ? (()=>{const task=summaryTask(row),g=taskGeometry(task);return <button onClick={()=>toggleProject(row.project.id)} className="task-body absolute overflow-hidden whitespace-nowrap px-2" style={{left:g.left,width:g.width,top:summaryBarTop,height:summaryBarHeight,"--task-color":collapsedProjectColor} as React.CSSProperties}>{t(row.project.name)} · {row.tasks.length} {" "}{t("项")}</button>;})() : null}
             </div>;
           })}
 
@@ -1655,6 +1674,7 @@ function TimelineApp() {
             <div className="setting-row"><div><strong>{t("新事项默认工作类型")}</strong></div><Select value={defaultTaskType} onValueChange={value=>setDefaultTaskType(value as TaskType)}><SelectTrigger className="w-40"><SelectValue/></SelectTrigger><SelectContent>{workTypes.map(type=><SelectItem key={type} value={type}>{t(type)}</SelectItem>)}</SelectContent></Select></div>
             <fieldset className="settings-section"><legend>{t("工作类型")}</legend><div className="work-type-list">{Object.entries(colors).map(([type,color])=><div key={type} className="work-type-item"><input className="work-type-name" maxLength={24} value={workTypeDrafts[type]??displayWorkType(type)} aria-label={t("编辑工作类型名称：{0}",t(type))} onChange={event=>setWorkTypeDrafts(current=>({...current,[type]:event.target.value}))} onBlur={()=>{const draft=workTypeDrafts[type];if(draft!==undefined)commitWorkTypeRename(type,draft);}} onKeyDown={event=>{if(event.key==="Enter"&&!event.nativeEvent.isComposing&&event.nativeEvent.keyCode!==229){event.preventDefault();event.currentTarget.blur();}else if(event.key==="Escape"){event.preventDefault();setWorkTypeDrafts(current=>{const next={...current};delete next[type];return next;});event.currentTarget.blur();}}}/><label className="work-type-color"><span className="sr-only">{t("{0}分类色",t(type))}</span><input type="color" value={color} aria-label={t("{0}分类色",t(type))} onChange={event=>setColors(current=>({...current,[type]:event.target.value}))}/><span aria-hidden="true">{color.toUpperCase()}</span></label><button type="button" disabled={workTypes.length<=1} aria-label={t("删除工作类型：{0}",t(type))} onClick={()=>setPendingWorkTypeDelete(type)}><X size={14}/></button></div>)}</div><div className="custom-type-editor"><Input maxLength={24} value={customTypeName} onChange={event=>setCustomTypeName(event.target.value)} onKeyDown={event=>{if(event.key==="Enter"&&!event.nativeEvent.isComposing&&event.nativeEvent.keyCode!==229){event.preventDefault();addWorkType();}}} placeholder={t("工作类型名称")}/><input type="color" value={customTypeColor} aria-label={t("自定义工作类型颜色")} onChange={event=>setCustomTypeColor(event.target.value)}/><Button type="button" variant="outline" onClick={()=>addWorkType()}>{t("添加")}</Button></div></fieldset>
             <div className="setting-row"><div><strong>{t("新事项默认长度（天）")}</strong></div><Input className="w-28" type="number" min={1} max={365} value={defaultDays} onChange={event=>setDefaultDays(Math.max(1,Math.min(365,Number(event.target.value)||1)))}/></div>
+            <div className="setting-row"><div><strong>{t("允许同轨事项时间重叠")}</strong><p>{t("统一控制新建、编辑日期、拖动、缩放和从 TodoList 放入时间线。")}</p></div><Switch checked={allowTaskOverlap} onCheckedChange={setAllowTaskOverlap} aria-label={t("允许同轨事项时间重叠")}/></div>
             <div className="setting-row"><div><strong>{t("悬停扩张速度")}</strong></div><Tabs value={hoverSpeed} onValueChange={value=>setHoverSpeed(value as typeof hoverSpeed)}><TabsList><TabsTrigger value="fast">{t("快")}</TabsTrigger><TabsTrigger value="medium">{t("中")}</TabsTrigger><TabsTrigger value="slow">{t("慢")}</TabsTrigger></TabsList></Tabs></div>
             <div className="setting-row"><div><strong>{t("事项悬停操作提示")}</strong><p>{t("悬停事项时显示可执行操作。")}</p></div><Switch checked={taskHoverHints} onCheckedChange={setTaskHoverHints} aria-label={t("事项悬停操作提示")}/></div>
             <div className="setting-row"><div><strong>{t("已完成事项显示")}</strong></div><Tabs value={completedMode} onValueChange={value=>setCompletedMode(value as typeof completedMode)}><TabsList><TabsTrigger value="fade">{t("淡化")}</TabsTrigger><TabsTrigger value="normal">{t("正常显示")}</TabsTrigger><TabsTrigger value="hide">{t("隐藏")}</TabsTrigger></TabsList></Tabs></div>
@@ -1677,6 +1697,7 @@ function TimelineApp() {
           {settingsCategory==="appearance"&&<>
             <h3>{t("外观与颜色")}</h3>
             <div className="setting-row"><div><strong>{t("主题")}</strong></div><Tabs value={theme} onValueChange={value=>setTheme(value as typeof theme)}><TabsList><TabsTrigger value="light">{t("白天")}</TabsTrigger><TabsTrigger value="dark">{t("晚上")}</TabsTrigger><TabsTrigger value="system">{t("跟随系统")}</TabsTrigger></TabsList></Tabs></div>
+            <div className="setting-row"><div><strong>{t("折叠项目摘要颜色")}</strong><p>{t("用于项目折叠后右侧的摘要事项条。")}</p></div><label className="flex items-center gap-2"><span className="meta font-mono">{collapsedProjectColor.toUpperCase()}</span><input type="color" value={collapsedProjectColor} aria-label={t("折叠项目摘要颜色")} onChange={event=>setCollapsedProjectColor(event.target.value)}/></label></div>
             <fieldset className="settings-section"><legend>{resolvedTheme==="light"?t("白天颜色预设"):t("晚上颜色预设")}</legend><div className="preset-grid">{[...builtInColorPresets,...customColorPresets].filter(preset=>preset.mode===resolvedTheme).map(preset=><div key={preset.id} className="color-preset-card"><button onClick={()=>applyColorPreset(preset)}><span>{preset.builtin?t(preset.name):preset.name}</span><span className="preset-swatches" aria-hidden="true"><i style={{background:preset.primary}}/><i style={{background:preset.table.canvas}}/><i style={{background:preset.table.project}}/>{Object.values(preset.categories).map((color,index)=><i key={index} style={{background:color}}/>)}</span></button>{!preset.builtin&&<button className="preset-delete" aria-label={t("删除颜色预设：{0}",preset.name)} onClick={()=>setCustomColorPresets(current=>current.filter(item=>item.id!==preset.id))}><X size={14}/></button>}</div>)}</div>
               <div className="flex items-center gap-2"><Input value={presetName} maxLength={40} onChange={event=>setPresetName(event.target.value)} onKeyDown={event=>{if(event.key==="Enter"){event.preventDefault();saveColorPreset();}}} placeholder={t("预设名称（可选）")}/><Button variant="outline" onClick={saveColorPreset}>{t("保存当前配色")}</Button></div><p className="meta">{t("留空时自动命名为“自定义#编号”；同名预设会更新。")}</p>
             </fieldset>

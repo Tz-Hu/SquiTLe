@@ -5,6 +5,7 @@ export function hasItemOverlap(tasks:Task[],id:string):boolean {
  if(!task||task.milestone)return false;
  return tasks.some(other=>other.id!==id&&!other.milestone&&rowId(other)===rowId(task)&&other.projectIds.some(project=>task.projectIds.includes(project))&&task.start<=other.end&&other.start<=task.end);
 }
+export const canPlaceItem=(tasks:Task[],id:string,allowOverlap:boolean)=>allowOverlap||!hasItemOverlap(tasks,id);
 export function moveRow(tasks:Task[],id:string,from:string,to:string,before?:string):Task[]{
  const source=tasks.find(task=>task.id===id);if(!source)return tasks;
  const key=rowId(source);

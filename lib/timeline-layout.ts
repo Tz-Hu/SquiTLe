@@ -5,6 +5,11 @@ export const TASK_COLUMN_MAX = 420;
 export const TIMELINE_VISIBLE_MIN = 320;
 export const COLLAPSED_PROJECT_HEIGHT = 22;
 
+export function collapsedSummaryBounds(barHeight:number){
+  const height=Math.min(barHeight,COLLAPSED_PROJECT_HEIGHT-4);
+  return {top:(COLLAPSED_PROJECT_HEIGHT-height)/2,bottom:(COLLAPSED_PROJECT_HEIGHT+height)/2,height};
+}
+
 export function clampTaskColumnWidth(width: number, viewportWidth: number) {
   const availableMax = Math.max(
     TASK_COLUMN_MIN,

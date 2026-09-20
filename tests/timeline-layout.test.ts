@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   clampTaskColumnWidth,
+  collapsedSummaryBounds,
   COLLAPSED_PROJECT_HEIGHT,
   TASK_COLUMN_MAX,
   TASK_COLUMN_MIN,
@@ -21,4 +22,5 @@ test('task column leaves usable room for the timeline', () => {
 test('collapsed projects keep one readable text line while staying compact', () => {
   assert.equal(COLLAPSED_PROJECT_HEIGHT,22);
   assert.ok(COLLAPSED_PROJECT_HEIGHT<=64/2);
+  assert.deepEqual(collapsedSummaryBounds(32),{top:2,bottom:20,height:18});
 });

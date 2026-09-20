@@ -4,6 +4,7 @@ minimumReleaseAgeIgnoreMissingTime: false
 trustLockfile: false
 strictDepBuilds: true
 allowBuilds:
+  core-js-pure: false
   esbuild: true
   fsevents: true
   sharp: true
