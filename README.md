@@ -15,7 +15,7 @@
   <a href="#fork-与自定义部署">Fork 与自定义部署</a>
 </p>
 
-![Squitle 主界面](docs/assets/squitle-overview.jpg)
+![SquiTLe 英文夜间界面](docs/assets/squitle-overview-dark-en.jpg)
 
 Squitle 是一个本地优先的个人时间轴排期工具。打开网页就能用，不需要先注册账号；如果希望在自己的设备之间同步，再按需登录或连接 WebDAV。
 
