@@ -1,6 +1,6 @@
 import {test} from "node:test";
 import assert from "node:assert/strict";
-import {BrowserJsonStorage,createScheduleStorage,DesktopJsonStorage,DEVICE_ID_KEY,getOrCreateDeviceId,SCHEDULE_STORAGE_KEY} from "../lib/storage.ts";
+import {BrowserJsonStorage,DEVICE_ID_KEY,getOrCreateDeviceId,SCHEDULE_STORAGE_KEY} from "../lib/persistence/storage.ts";
 
 class MemoryStorage {
   values=new Map<string,string>();
@@ -38,23 +38,4 @@ test("device identity is created once per browser storage",()=>{
   const second=getOrCreateDeviceId(memory,()=>`device-${++calls}`);
   assert.equal(first,"device-1");assert.equal(second,"device-1");assert.equal(calls,1);
   assert.equal(memory.getItem(DEVICE_ID_KEY),"device-1");
-});
-
-test("desktop storage loads and saves through the native document bridge",async()=>{
-  const calls:Array<{command:string;args?:Record<string,unknown>}>=[];
-  const root=globalThis as typeof globalThis&{__TAURI__?:unknown};
-  root.__TAURI__={core:{invoke:async(command:string,args?:Record<string,unknown>)=>{
-    calls.push({command,args});
-    return command==="read_app_schedule_document"?JSON.stringify({revision:3}):null;
-  }}};
-  try{
-    const storage=createScheduleStorage<{revision:number}>(new MemoryStorage());
-    assert.ok(storage instanceof DesktopJsonStorage);
-    assert.deepEqual(await storage.load(),{data:{revision:3}});
-    await storage.save({revision:4});
-    assert.deepEqual(calls,[
-      {command:"read_app_schedule_document",args:undefined},
-      {command:"write_app_schedule_document",args:{contents:JSON.stringify({revision:4})}},
-    ]);
-  }finally{delete root.__TAURI__;}
 });

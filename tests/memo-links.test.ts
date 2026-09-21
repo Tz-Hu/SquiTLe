@@ -1,6 +1,6 @@
 import {test} from "node:test";
 import assert from "node:assert/strict";
-import {extractMemoLinks} from "../lib/memo-links.ts";
+import {extractMemoLinks} from "../lib/domain/memo-links.ts";
 
 test("memo links include web URLs and full-line local paths",()=>{
   const links=extractMemoLinks("Read https://example.com/paper.\n/Users/me/Papers/draft.pdf\nC:\\Data\\result.csv");

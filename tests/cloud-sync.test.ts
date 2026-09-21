@@ -1,7 +1,7 @@
 import {test} from "node:test";
 import assert from "node:assert/strict";
-import {BrowserSyncCheckpointStore,documentFingerprint,syncScheduleDocument,type CloudScheduleSnapshot,type CloudScheduleStore} from "../lib/cloud-sync.ts";
-import {DOCUMENT_KIND,type ScheduleDocument} from "../lib/persistence.ts";
+import {BrowserSyncCheckpointStore,documentFingerprint,syncScheduleDocument,type CloudRevision,type CloudScheduleSnapshot,type CloudScheduleStore} from "../lib/sync/cloud-sync.ts";
+import {DOCUMENT_KIND,type ScheduleDocument} from "../lib/persistence/persistence.ts";
 
 const document=(revision:number,title:string,device="device-a"):ScheduleDocument=>({
   kind:DOCUMENT_KIND,
@@ -16,10 +16,10 @@ const document=(revision:number,title:string,device="device-a"):ScheduleDocument
 class MemoryCloud implements CloudScheduleStore{
   snapshot:CloudScheduleSnapshot|null=null;
   async load(){return this.snapshot;}
-  async save(value:ScheduleDocument,expected:number|null){
+  async save(value:ScheduleDocument,expected:CloudRevision|null){
     const actual=this.snapshot?.serverRevision??null;
     if(actual!==expected)throw new Error("revision_conflict");
-    this.snapshot={documentId:value.documentId,serverRevision:(actual??0)+1,updatedAt:value.updatedAt,document:value};
+    this.snapshot={documentId:value.documentId,serverRevision:(typeof actual==="number"?actual:0)+1,updatedAt:value.updatedAt,document:value};
     return this.snapshot;
   }
 }
@@ -80,4 +80,14 @@ test("checkpoint storage is isolated by document and ignores malformed values",(
   assert.equal(store.load("document-2"),null);
   memory.setItem("squitle-sync-checkpoint:broken","not-json");
   assert.equal(store.load("broken"),null);
+});
+
+test("checkpoint storage isolates cloud providers and accepts opaque revisions",()=>{
+  const memory=new MemoryStorage();
+  const sites=new BrowserSyncCheckpointStore(memory);
+  const webdav=new BrowserSyncCheckpointStore(memory,"webdav:server-a");
+  const checkpoint={documentId:"document-1",serverRevision:'etag:"abc"',documentFingerprint:"hash",syncedAt:"2026-09-20T00:00:00.000Z"};
+  webdav.save(checkpoint);
+  assert.deepEqual(webdav.load("document-1"),checkpoint);
+  assert.equal(sites.load("document-1"),null);
 });

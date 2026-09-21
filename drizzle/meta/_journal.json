@@ -1,5 +1,20 @@
 {
   "version": "7",
   "dialect": "sqlite",
-  "entries": []
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1789919380230,
+      "tag": "0000_watery_galactus",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1789959986277,
+      "tag": "0001_curved_veda",
+      "breakpoints": true
+    }
+  ]
 }

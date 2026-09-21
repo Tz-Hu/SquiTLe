@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {completedLast} from "../lib/daily-agenda.ts";
+import {completedLast} from "../lib/domain/daily-agenda.ts";
 
 test("daily agenda keeps unfinished items first and completed items at the bottom",()=>{
   const result=completedLast([

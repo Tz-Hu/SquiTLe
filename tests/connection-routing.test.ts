@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {obstaclesNearRoute} from "../lib/connection-routing.ts";
+import {obstaclesNearRoute} from "../lib/presentation/connection-routing.ts";
 
 test("connection routing keeps only obstacles near the endpoint corridor",()=>{
   const near={left:40,right:60,top:10,bottom:30};

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { appendDependencyOutput, dependencyIsCompleted, dependencyOutputs, pruneDependencyOutputs, transferTask, relatedDepths, hasCycle, type Task, type Dependency } from '../lib/schedule.ts';
+import { appendDependencyOutput, dependencyIsCompleted, dependencyOutputs, pruneDependencyOutputs, transferTask, relatedDepths, hasCycle, type Task, type Dependency } from '../lib/domain/schedule.ts';
 
 const task = (id: string, project: string, order = 0): Task => ({ id, title: id, projectIds: [project], order: { [project]: order }, type: '实验', start: '2026-09-01', end: '2026-09-12', status: '未开始' });
 const edge = (source: string, target: string): Dependency => ({ id: source+target, source: { taskId: source, day: 3, side: 'bottom' }, target: { taskId: target, day: 4, side: 'top' } });

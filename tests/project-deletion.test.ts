@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {deleteProjectContent,type Task,type Dependency} from '../lib/schedule.ts';
+import {deleteProjectContent,type Task,type Dependency} from '../lib/domain/schedule.ts';
 
 const task=(id:string,projectIds:string[]):Task=>({id,title:id,projectIds,order:Object.fromEntries(projectIds.map((project,index)=>[project,index])),type:'工程',start:'2026-09-16',end:'2026-09-17',status:'未开始'});
 const edges:Dependency[]=[{id:'edge',source:{taskId:'a',day:0,side:'bottom'},target:{taskId:'c',day:0,side:'top'}}];

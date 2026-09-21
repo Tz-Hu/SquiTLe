@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import type {Task} from "../lib/schedule.ts";
-import {deleteWorkType,renameWorkType} from "../lib/work-types.ts";
+import type {Task} from "../lib/domain/schedule.ts";
+import {deleteWorkType,renameWorkType} from "../lib/domain/work-types.ts";
 
 const task=(id:string,type:string):Task=>({id,title:id,type,projectIds:["p"],order:{p:0},start:"2026-09-01",end:"2026-09-02",status:"未开始"});
 

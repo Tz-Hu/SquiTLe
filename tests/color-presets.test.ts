@@ -1,7 +1,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {builtInColorPresets,nextCustomPresetName,restoreCustomColorPresets} from '../lib/color-presets.ts';
-import {defaultTablePalettes} from '../lib/table-colors.ts';
+import {builtInColorPresets,nextCustomPresetName,restoreCustomColorPresets} from '../lib/presentation/color-presets.ts';
+import {defaultTablePalettes} from '../lib/presentation/table-colors.ts';
 
 test('built-in presets contain the requested day and night themes',()=>{
   assert.deepEqual(builtInColorPresets.filter(item=>item.mode==='light').map(item=>item.id),['default-light','nailong','dpsk','morandi','mondrian','macaron','memphis','rococo','dunhuang']);

@@ -1,7 +1,7 @@
 import {test} from "node:test";
 import assert from "node:assert/strict";
-import {CloudBaseScheduleStore,cloudBaseConfigFromEnvironment} from "../lib/cloudbase.ts";
-import {DOCUMENT_KIND,type ScheduleDocument} from "../lib/persistence.ts";
+import {CloudBaseScheduleStore,cloudBaseConfigFromEnvironment} from "../lib/sync/cloudbase.ts";
+import {DOCUMENT_KIND,type ScheduleDocument} from "../lib/persistence/persistence.ts";
 
 const document:ScheduleDocument={
   kind:DOCUMENT_KIND,schemaVersion:6,documentId:"doc-1",revision:1,

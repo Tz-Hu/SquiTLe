@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {clampSettingsNavWidth} from "../lib/settings-layout.ts";
+import {clampSettingsNavWidth} from "../lib/presentation/settings-layout.ts";
 
 test("settings navigation stays draggable while preserving usable detail width",()=>{
   assert.equal(clampSettingsNavWidth(80,900),120);

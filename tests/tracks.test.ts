@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import type {Task} from "../lib/schedule.ts";
-import {reconcileTracks,taskTypeForTrack,tracksFromTasks} from "../lib/tracks.ts";
+import type {Task} from "../lib/domain/schedule.ts";
+import {reconcileTracks,taskTypeForTrack,tracksFromTasks} from "../lib/domain/tracks.ts";
 
 const task=(id:string,rowId:string,title=id,type="论文"):Task=>({id,rowId,title,type,projectIds:["p"],order:{p:0},start:"2026-09-01",end:"2026-09-02",status:"未开始"});
 

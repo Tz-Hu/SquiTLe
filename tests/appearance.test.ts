@@ -1,7 +1,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {defaultAppearance,restoreAppearance,restoreCategories,migrateCategoryCatalog,categoryDefaults,WORK_TYPE_CATALOG_VERSION,taskBounds,layoutTokens} from '../lib/appearance.ts';
-import {migrateTablePalettes,defaultTablePalettes} from '../lib/table-colors.ts';
+import {defaultAppearance,restoreAppearance,restoreCategories,migrateCategoryCatalog,categoryDefaults,WORK_TYPE_CATALOG_VERSION,taskBounds,layoutTokens} from '../lib/presentation/appearance.ts';
+import {migrateTablePalettes,defaultTablePalettes} from '../lib/presentation/table-colors.ts';
 
 test('task height and both connection edges share a fixed row center',()=>{
   for(const height of [20,24,28,32]){
@@ -14,8 +14,8 @@ test('task height and both connection edges share a fixed row center',()=>{
 });
 test('settings restore defaults and clamp invalid saved values',()=>{
   assert.deepEqual(restoreAppearance(null),defaultAppearance);
-  const restored=restoreAppearance({barHeight:500,barFill:NaN,lineOpacity:-10,weekends:false});
-  assert.equal(restored.barHeight,32);assert.equal(restored.barFill,16);assert.equal(restored.lineOpacity,8);assert.equal(restored.weekends,false);
+  const restored=restoreAppearance({barHeight:500,barFill:NaN,collapsedOpacity:74,lineOpacity:-10,weekends:false});
+  assert.equal(restored.barHeight,32);assert.equal(restored.barFill,16);assert.equal(restored.collapsedOpacity,80);assert.equal(restored.lineOpacity,8);assert.equal(restored.weekends,false);
   assert.equal(restoreAppearance({barRadius:3,completedOpacity:67}).barRadius,4);
   assert.equal(restoreAppearance({barRadius:3,completedOpacity:67}).completedOpacity,55);
   assert.deepEqual(restoreCategories({论文:'bad'}),categoryDefaults);

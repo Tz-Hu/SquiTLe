@@ -2,11 +2,11 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import ts from 'typescript';
-import {english,translate} from '../lib/i18n.ts';
-import {visibleMonthSegment} from '../lib/calendar-header.ts';
+import {english,translate} from '../lib/presentation/i18n.ts';
+import {visibleMonthSegment} from '../lib/presentation/calendar-header.ts';
 
 test('every literal translation key in the UI has English copy',()=>{
-  for(const file of ['app/page.tsx','components/manual-date-field.tsx','components/inbox-panel.tsx','components/daily-agenda.tsx']){
+  for(const file of ['features/timeline/timeline-app.tsx','components/shared/manual-date-field.tsx','features/inbox/inbox-panel.tsx','features/inbox/daily-agenda.tsx']){
     const tree=ts.createSourceFile(file,readFileSync(file,'utf8'),ts.ScriptTarget.Latest,true,ts.ScriptKind.TSX);
     function check(n:ts.Node){
       if(ts.isCallExpression(n)&&n.expression.getText(tree)==='t'&&n.arguments[0]){

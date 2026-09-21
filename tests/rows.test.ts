@@ -1,7 +1,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {moveRow,moveItem,insertItemRow,rowId,hasItemOverlap,canPlaceItem} from '../lib/rows.ts';
-import type {Task} from '../lib/schedule.ts';
+import {moveRow,moveItem,insertItemRow,rowId,hasItemOverlap,canPlaceItem} from '../lib/domain/rows.ts';
+import type {Task} from '../lib/domain/schedule.ts';
 const task=(id:string,row:string,project='p1',order=0):Task=>({id,rowId:row,projectIds:[project],order:{[project]:order},title:id,type:'实验',start:'2026-08-06',end:'2026-08-10',status:'未开始'});
 test('overlap applies only to ordinary tasks sharing a row and project, with inclusive dates',()=>{
  const first=task('a','r1');const second={...task('b','r1'),start:'2026-08-10',end:'2026-08-12'};

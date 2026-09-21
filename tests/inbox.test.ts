@@ -1,7 +1,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {extractInboxUrgency,inboxTimeTone,isInboxItemOverdue,parseInboxInput,restoreInbox,sortInboxItems,type InboxItem} from '../lib/inbox.ts';
-import {historyOf,commit,undo} from '../lib/history.ts';
+import {extractInboxUrgency,inboxTimeTone,isInboxItemOverdue,parseInboxInput,restoreInbox,sortInboxItems,type InboxItem} from '../lib/domain/inbox.ts';
+import {historyOf,commit,undo} from '../lib/domain/history.ts';
 test('inbox prefixes detect format without changing ordinary text',()=>{
   for(const [text,kind] of [['1. ','numbered'],['3. ','numbered'],['12. ','numbered'],['- ','bullet'],['[] ','checklist'],['【】 ','checklist']] as const)assert.deepEqual(parseInboxInput(text+'研究','bullet'),{text:'研究',kind});
   assert.deepEqual(parseInboxInput('1.2 模型','checklist'),{text:'1.2 模型',kind:'checklist'});

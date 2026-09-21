@@ -1,6 +1,6 @@
 import {test} from "node:test";
 import assert from "node:assert/strict";
-import {parseManualDate} from "../lib/manual-date.ts";
+import {parseManualDate} from "../lib/domain/manual-date.ts";
 test("accepts common Chinese and year-first date formats",()=>{
  for(const date of ["2026年8月6日","20260806","2026/08/06","2026-8-06","2026.08.06"])assert.equal(parseManualDate(date,"zh"),"2026-08-06");
 });

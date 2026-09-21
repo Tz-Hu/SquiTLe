@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { HISTORY_LIMIT, historyOf, commit, undo, redo } from '../lib/history.ts';
+import { HISTORY_LIMIT, historyOf, commit, undo, redo } from '../lib/domain/history.ts';
 
 test('deleting shared task and relationships is one undoable transaction', () => {
   const original = { tasks: [{id:'a',projects:['p1','p2']},{id:'b',projects:['p1']}], edges:[{source:'a',target:'b'}] };

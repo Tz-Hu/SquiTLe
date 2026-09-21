@@ -1,6 +1,6 @@
 import {test} from "node:test";
 import assert from "node:assert/strict";
-import {advanceScheduleDocument,BACKUP_KIND, CURRENT_DATA_VERSION, DOCUMENT_KIND, createBackup, loadScheduleDocument, migratePersistedState, parseBackup} from "../lib/persistence.ts";
+import {advanceScheduleDocument,BACKUP_KIND, CURRENT_DATA_VERSION, DOCUMENT_KIND, createBackup, loadScheduleDocument, migratePersistedState, parseBackup} from "../lib/persistence/persistence.ts";
 
 const oldState={projects:[{id:"p1"}],tasks:[{id:"t1",title:"Test",note:"legacy note"}],edges:[]};
 

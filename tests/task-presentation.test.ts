@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {expandedInset,foldedSide,portOffset,visiblePortDays,taskBarWidth} from '../lib/task-presentation.ts';
+import {expandedInset,foldedSide,portOffset,visiblePortDays,taskBarWidth} from '../lib/presentation/task-presentation.ts';
 
 test('handle inset follows the expanded task boundary',()=>{
   assert.equal(expandedInset(100,1),0);

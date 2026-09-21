@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { panViewport, windowScrollLimit } from '../lib/pan.ts';
+import { panViewport, windowScrollLimit } from '../lib/presentation/pan.ts';
 
 test('leftward drag advances time; rightward drag reverses it smoothly', () => {
   assert.deepEqual(panViewport(200,-30.5,1000,54),{columns:0,scrollLeft:230.5});

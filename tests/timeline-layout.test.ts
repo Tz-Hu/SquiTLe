@@ -6,7 +6,7 @@ import {
   COLLAPSED_PROJECT_HEIGHT,
   TASK_COLUMN_MAX,
   TASK_COLUMN_MIN,
-} from '../lib/timeline-layout.ts';
+} from '../lib/presentation/timeline-layout.ts';
 
 test('task column width respects its normal limits', () => {
   assert.equal(clampTaskColumnWidth(100,1400),TASK_COLUMN_MIN);

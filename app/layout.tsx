@@ -1,4 +1,9 @@
 import type { Metadata } from "next";
 import "./globals.css";
-export const metadata: Metadata = { title: "科研排期 · Research Gantt", description: "轻量、直观的个人科研甘特图与时间线排期工具。", icons: { icon: "/favicon.svg", shortcut: "/favicon.svg" } };
+export const metadata: Metadata = {
+  title: "Squitle · Schedule quickly in TimeLine",
+  description: "快速、直观的个人时间线排期与 TodoList。",
+  applicationName: "Squitle",
+  icons: { icon: "/brand/squitle-pixel.png", shortcut: "/brand/squitle-pixel.png", apple: "/brand/squitle-pixel.png" },
+};
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) { return <html lang="zh-CN"><body>{children}</body></html>; }

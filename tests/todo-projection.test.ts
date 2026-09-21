@@ -1,7 +1,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {projectTasksToTodo,reconcileTodoList} from '../lib/todo-projection.ts';
-import type {Task,Dependency} from '../lib/schedule.ts';
+import {projectTasksToTodo,reconcileTodoList} from '../lib/domain/todo-projection.ts';
+import type {Task,Dependency} from '../lib/domain/schedule.ts';
 
 const tasks:Task[]=[{id:'task-1',title:'实验',projectIds:['p1'],order:{p1:0},type:'实验',start:'2026-09-16',end:'2026-09-18',status:'进行中'}];
 test('timeline tasks are projected into TodoList without duplicating inbox records',()=>{
