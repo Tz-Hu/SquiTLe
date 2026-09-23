@@ -16,11 +16,20 @@ async function snapshotFor(userId:string,documentId:string){
   return legacy?{documentId:legacy.documentId,serverRevision:legacy.serverRevision,updatedAt:legacy.updatedAt,document:JSON.parse(legacy.documentJson)}:null;
 }
 
+async function revisionFor(userId:string,documentId:string){
+  const [row]=await getDb().select({documentId:syncTimelines.documentId,serverRevision:syncTimelines.serverRevision,updatedAt:syncTimelines.updatedAt}).from(syncTimelines).where(and(eq(syncTimelines.userId,userId),eq(syncTimelines.documentId,documentId))).limit(1);
+  if(row)return row;
+  const [legacy]=await getDb().select({documentId:syncDocuments.documentId,serverRevision:syncDocuments.serverRevision,updatedAt:syncDocuments.updatedAt}).from(syncDocuments).where(and(eq(syncDocuments.userId,userId),eq(syncDocuments.documentId,documentId))).limit(1);
+  return legacy??null;
+}
+
 export async function GET(request:Request){
   const user=await getChatGPTUser();if(!user)return unauthorized();
-  const documentId=new URL(request.url).searchParams.get("documentId")??"";
+  const params=new URL(request.url).searchParams,documentId=params.get("documentId")??"";
   if(!documentId)return Response.json({error:"document_id_required"},{status:400,headers:JSON_HEADERS});
-  try{return Response.json({snapshot:await snapshotFor(user.userId,documentId)},{headers:JSON_HEADERS});}
+  try{return params.get("metadata")==="1"
+    ?Response.json({revision:await revisionFor(user.userId,documentId)},{headers:JSON_HEADERS})
+    :Response.json({snapshot:await snapshotFor(user.userId,documentId)},{headers:JSON_HEADERS});}
   catch(error){console.error("Squitle sync load failed",error);return Response.json({error:"cloud_unavailable"},{status:503,headers:JSON_HEADERS});}
 }
 

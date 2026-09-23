@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { panViewport, windowScrollLimit } from '../lib/presentation/pan.ts';
+import { horizontalWheelDelta, panViewport, windowScrollLimit } from '../lib/presentation/pan.ts';
 
 test('leftward drag advances time; rightward drag reverses it smoothly', () => {
   assert.deepEqual(panViewport(200,-30.5,1000,54),{columns:0,scrollLeft:230.5});
@@ -34,4 +34,12 @@ test('long past-to-future round trips stay inside the rendered window', () => {
 test('scroll limit follows a resized frozen column area', () => {
   assert.equal(windowScrollLimit(1000,1200,360),160);
   assert.equal(windowScrollLimit(1000,1200,520),320);
+});
+
+test('trackpad and shifted wheel gestures produce horizontal timeline motion',()=>{
+  assert.equal(horizontalWheelDelta(42,3,false,0,800),42);
+  assert.equal(horizontalWheelDelta(2,30,false,0,800),0);
+  assert.equal(horizontalWheelDelta(2,3,true,0,800),3);
+  assert.equal(horizontalWheelDelta(2,3,true,1,800),48);
+  assert.equal(horizontalWheelDelta(2,3,true,2,800),2400);
 });

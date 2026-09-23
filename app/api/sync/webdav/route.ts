@@ -46,6 +46,16 @@ async function loadSnapshot(connection:WebDavConnection):Promise<CloudScheduleSn
   return {documentId:document.documentId,serverRevision,updatedAt:document.updatedAt,document};
 }
 
+async function loadRevision(connection:WebDavConnection,documentId:string){
+  let response=await requestWebDav(connection,{method:"HEAD"});
+  if(response.status===405||response.status===501)response=await requestWebDav(connection,{method:"GET",headers:{accept:"application/json"}});
+  if(response.status===404)return null;
+  if(response.status===401||response.status===403)throw new Error("webdav_auth_failed");
+  if(!response.ok)throw new Error("webdav_unavailable");
+  const serverRevision=revisionFrom(response);if(!serverRevision)throw new Error("webdav_version_unavailable");
+  return {documentId,serverRevision,updatedAt:response.headers.get("last-modified")??new Date().toISOString()};
+}
+
 function statusFor(error:unknown){
   const code=error instanceof Error?error.message:"webdav_unavailable";
   if(code==="document_too_large")return {code,status:413};
@@ -56,13 +66,14 @@ function statusFor(error:unknown){
 
 export async function POST(request:Request){
   if(!await getChatGPTUser())return responseError("sign_in_required",401);
-  let body:{action?:unknown;connection?:unknown;document?:unknown;expectedServerRevision?:unknown};
+  let body:{action?:unknown;connection?:unknown;documentId?:unknown;document?:unknown;expectedServerRevision?:unknown};
   try{body=await request.json();}catch{return responseError("invalid_request",400);}
   const connection=body.connection as WebDavConnection;
   const validation=validateWebDavConnection(connection);if(validation)return responseError(validation,400);
   const normalized=normalizeWebDavConnection(connection);
   try{
     if(body.action==="load")return Response.json({snapshot:await loadSnapshot(normalized)},{headers:JSON_HEADERS});
+    if(body.action==="revision"&&typeof body.documentId==="string")return Response.json({revision:await loadRevision(normalized,body.documentId)},{headers:JSON_HEADERS});
     if(body.action!=="save"||!isScheduleDocument(body.document)||body.document.schemaVersion>CURRENT_DATA_VERSION)return responseError("invalid_request",400);
     const expected=body.expectedServerRevision;
     if(expected!==null&&typeof expected!=="string")return responseError("invalid_revision",400);

@@ -1,4 +1,4 @@
-import type { CloudRevision, CloudScheduleSnapshot, CloudScheduleStore } from "./cloud-sync";
+import type { CloudRevision, CloudRevisionSnapshot, CloudScheduleSnapshot, CloudScheduleStore } from "./cloud-sync";
 import type { ScheduleDocument } from "../persistence/persistence";
 
 export type SyncAccount = {
@@ -53,6 +53,14 @@ export class SitesScheduleStore implements CloudScheduleStore {
       `/api/sync/document?documentId=${encodeURIComponent(documentId)}`,
     );
     return value.snapshot;
+  }
+
+  async loadRevision(documentId:string):Promise<CloudRevisionSnapshot|null>{
+    const value=await jsonRequest<{revision:CloudRevisionSnapshot|null}>(
+      this.fetcher,
+      `/api/sync/document?documentId=${encodeURIComponent(documentId)}&metadata=1`,
+    );
+    return value.revision;
   }
 
   async save(

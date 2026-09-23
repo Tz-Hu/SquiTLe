@@ -14,13 +14,15 @@ test("Sites sync store loads and conditionally saves the signed-in user's docume
   const snapshot={documentId:"doc-1",serverRevision:3,updatedAt:document.updatedAt,document};
   const fetcher=async(input:RequestInfo|URL,init?:RequestInit)=>{
     calls.push({input:String(input),init});
-    return Response.json({snapshot});
+    return Response.json(String(input).includes("metadata=1")?{revision:snapshot}:{snapshot});
   };
   const store=new SitesScheduleStore(fetcher as typeof fetch);
   assert.deepEqual(await store.load("ignored-local-id"),snapshot);
+  assert.deepEqual(await store.loadRevision("ignored-local-id"),snapshot);
   assert.deepEqual(await store.save(document,2),snapshot);
   assert.equal(calls[0].input,"/api/sync/document?documentId=ignored-local-id");
-  assert.deepEqual(JSON.parse(String(calls[1].init?.body)),{document,expectedServerRevision:2});
+  assert.equal(calls[1].input,"/api/sync/document?documentId=ignored-local-id&metadata=1");
+  assert.deepEqual(JSON.parse(String(calls[2].init?.body)),{document,expectedServerRevision:2});
 });
 
 test("account lookup treats an unauthenticated response as signed out",async()=>{

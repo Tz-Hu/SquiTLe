@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { addDays, addMonths, startOfMonth, differenceInCalendarDays, format, startOfDay } from "date-fns";
 import { zhCN, enUS } from "date-fns/locale";
 import {useLocale} from "@/components/providers/locale-provider";
@@ -23,7 +23,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { relatedDepths, hasCycle, deleteProjectContent, dependencyIsCompleted, dependencyOutputs, pruneDependencyOutputs, taskOutputs, type Task, type TaskType, type TaskOutput, type Dependency, type Port } from "@/lib/domain/schedule";
 import { historyOf, commit, undo, redo } from "@/lib/domain/history";
 import { createPortal, flushSync } from "react-dom";
-import { panViewport, windowScrollLimit } from "@/lib/presentation/pan";
+import { horizontalWheelDelta, panViewport, windowScrollLimit } from "@/lib/presentation/pan";
 import { defaultTablePalettes, migrateTablePalettes, tableColorLabels, tableTextColor, type TableColors, type TablePalettes } from "@/lib/presentation/table-colors";
 import { categoryDefaults, WORK_TYPE_CATALOG_VERSION, layoutTokens, taskBounds, appearanceFields, appearancePresetValues, snapAppearanceValue, defaultAppearance, restoreAppearance, restoreCategories, migrateCategoryCatalog } from "@/lib/presentation/appearance";
 import { moveRow, moveItem, insertItemRow, rowId, canPlaceItem } from "@/lib/domain/rows";
@@ -45,7 +45,8 @@ import {deleteWorkType,renameWorkType,renameWorkTypeColorMap} from "@/lib/domain
 import {reconcileTracks,taskTypeForTrack,tracksFromTasks,type TaskTrack} from "@/lib/domain/tracks";
 import {createBrowserScheduleStorage,createLocalId,getOrCreateDeviceId,LEGACY_DOCUMENT_BACKUP_KEY,timelineDocumentKey,type ScheduleStorage} from "@/lib/persistence/storage";
 import {obstaclesNearRoute} from "@/lib/presentation/connection-routing";
-import {BrowserSyncCheckpointStore,checkpointFrom,syncScheduleDocument,type CloudRevision,type SyncResult} from "@/lib/sync/cloud-sync";
+import {BrowserSyncCheckpointStore,checkpointFrom,remoteRevisionChanged,syncScheduleDocument,type CloudRevision,type SyncResult} from "@/lib/sync/cloud-sync";
+import {mergeScheduleDocuments} from "@/lib/sync/merge-documents";
 import {deleteCloudTimeline,loadCloudTimelines,loadSyncAccount,renameCloudTimeline,SitesScheduleStore,SyncRequestError,type SyncAccount} from "@/lib/sync/sites-sync";
 import {millisecondsUntilNextTodayMarker,todayMarkerFraction} from "@/lib/presentation/today-marker";
 import {loadWebDavConnection,NUTSTORE_WEBDAV_URL,saveWebDavConnection,validateWebDavConnection,WebDavScheduleStore,webDavCheckpointScope,type WebDavConnection} from "@/lib/sync/webdav-sync";
@@ -58,13 +59,18 @@ const SETTINGS_WIDTH_KEY="schedule-timeline-settings-width";
 const SETTINGS_NAV_WIDTH_KEY="schedule-timeline-settings-nav-width";
 const TASK_COLUMN_WIDTH_KEY="schedule-timeline-task-column-width";
 const SYNC_PROVIDER_KEY="squitle-sync-provider";
+const SYNC_DATA_PREFERENCE_KEY="squitle-sync-data-preference";
 const SYNC_CONFLICT_BACKUP_KEY="squitle-sync-conflict-backup";
+const SITES_REMOTE_CHECK_INTERVAL=5_000;
+const WEBDAV_REMOTE_CHECK_INTERVAL=15_000;
 const FOLDED_PLACEHOLDER_FRACTION=1/4;
 type SyncProvider="local"|"sites"|"webdav";
+type SyncDataPreference="ask"|"merge"|"cloud"|"device";
 type EdgeLevel="thin"|"regular"|"thick"|"bold";
 type ArrowLevel="small"|"regular"|"large"|"xlarge";
 const edgeStrokeByLevel:Record<EdgeLevel,number>={thin:.75,regular:1,thick:1.5,bold:2};
 const arrowSizeByLevel:Record<ArrowLevel,number>={small:4,regular:5,large:7,xlarge:9};
+const subscribeToHydration=()=>()=>{};
 
 type PersonalDefaults=Partial<{
   general:{editorMode:"panel"|"dialog"};
@@ -115,6 +121,7 @@ export function TimelineApp() {
   const [taskColumnWidth,setTaskColumnWidth]=useState(()=>{if(typeof window==="undefined")return TASK_COLUMN_DEFAULT;const saved=Number(localStorage.getItem(TASK_COLUMN_WIDTH_KEY));return Number.isFinite(saved)?Math.max(TASK_COLUMN_MIN,Math.min(TASK_COLUMN_MAX,saved)):TASK_COLUMN_DEFAULT;});
   const taskColumnWidthRef=useRef(taskColumnWidth);
   const taskColumnDrag=useRef<{pointerId:number;startX:number;startWidth:number}|null>(null);
+  const hydrated=useSyncExternalStore(subscribeToHydration,()=>true,()=>false);
   const [ready, setReady] = useState(false);
   const [timelines,setTimelines]=useState<TimelineEntry[]>([]);
   const [activeTimelineId,setActiveTimelineId]=useState("");
@@ -153,6 +160,7 @@ export function TimelineApp() {
   const settingsResizeTimer=useRef<ReturnType<typeof setTimeout>|null>(null);
   const [dateErrors,setDateErrors]=useState<Record<string,boolean>>({});
   const [syncProvider,setSyncProvider]=useState<SyncProvider>("local");
+  const [syncDataPreference,setSyncDataPreference]=useState<SyncDataPreference>(()=>{if(typeof window==="undefined")return "ask";const saved=localStorage.getItem(SYNC_DATA_PREFERENCE_KEY);return saved==="merge"||saved==="cloud"||saved==="device"?saved:"ask";});
   const [syncAccount,setSyncAccount]=useState<SyncAccount|null>(null);
   const [syncAccountChecked,setSyncAccountChecked]=useState(false);
   const [syncStatus,setSyncStatus]=useState<"local"|"idle"|"syncing"|"synced"|"conflict"|"error">("local");
@@ -166,7 +174,9 @@ export function TimelineApp() {
   const [pendingCloudChoice,setPendingCloudChoice]=useState<Extract<SyncResult,{status:"initial-choice"|"conflict"}>|null>(null);
   const cloudSyncRunning=useRef(false);
   const cloudSyncQueued=useRef(false);
+  const remoteCheckRunning=useRef(false);
   const cloudSyncTimer=useRef<ReturnType<typeof setTimeout>|null>(null);
+  const performCloudSyncRef=useRef<(silent?:boolean)=>Promise<void>>(async()=>undefined);
   useEffect(()=>{
     let active=true;
     const requested=new URLSearchParams(window.location.search).get("sync")==="connected";
@@ -405,10 +415,12 @@ export function TimelineApp() {
       const localEntry=library.find(item=>item.documentId===requestedId&&!item.cloudOnly)??library.find(item=>!item.cloudOnly);
       const libraryDocument=localEntry?readTimelineDocument(localStorage,localEntry.documentId):null;
       if(libraryDocument){
-        scheduleDocumentRef.current=libraryDocument;
-        scheduleStorageRef.current=createBrowserScheduleStorage<unknown>(localStorage,timelineDocumentKey(libraryDocument.documentId));
-        rememberActiveTimelineId(localStorage,libraryDocument.documentId);
-        if(active){setTimelines(library);setActiveTimelineId(libraryDocument.documentId);applyPersistedState(libraryDocument.data);setReady(true);}return;
+        const document=loadScheduleDocument(libraryDocument,deviceIdRef.current).document;
+        writeTimelineDocument(localStorage,document);
+        scheduleDocumentRef.current=document;
+        scheduleStorageRef.current=createBrowserScheduleStorage<unknown>(localStorage,timelineDocumentKey(document.documentId));
+        rememberActiveTimelineId(localStorage,document.documentId);
+        if(active){setTimelines(library);setActiveTimelineId(document.documentId);applyPersistedState(document.data);setReady(true);}return;
       }
       const exampleTasks=initialTasks();
       const restored: Schedule = { projects: initialProjects(), tasks: exampleTasks, edges: initialEdges(), tracks:tracksFromTasks(exampleTasks), inbox:[] };
@@ -428,14 +440,14 @@ export function TimelineApp() {
         if (savedTasks) {
           const migrated: Task[] = legacy.map((task, i) => {
             const project = restoredProjects.some(p => p.id === task.projectId) ? task.projectId! : restoredProjects[0]?.id ?? "p1";
-            return { id: task.id || crypto.randomUUID(), title: task.title || "未命名事项", projectIds: [project], order: { [project]: i },
+            return { id: task.id || createLocalId(), title: task.title || "未命名事项", projectIds: [project], order: { [project]: i },
               type: (task.type==="其他"?"整理":task.type || task.project || "整理") as TaskType, start: task.start || iso(new Date()), end: task.end || task.start || iso(new Date()), status: task.status || "未开始", milestone: task.milestone };
           });
           restored.tasks = migrated;
           restored.tracks = tracksFromTasks(migrated);
           restored.edges = legacy.flatMap(task => {
             const source = migrated.find(t => t.id === task.dependsOn); const target = migrated.find(t => t.id === task.id);
-            return source && target ? [{ id: crypto.randomUUID(), source: { taskId: source.id, day: duration(source), side: "bottom" as const }, target: { taskId: target.id, day: 0, side: "top" as const } }] : [];
+            return source && target ? [{ id: createLocalId(), source: { taskId: source.id, day: duration(source), side: "bottom" as const }, target: { taskId: target.id, day: 0, side: "top" as const } }] : [];
           });
         }
         const collapsed = localStorage.getItem("research-gantt-collapsed-projects");
@@ -443,7 +455,7 @@ export function TimelineApp() {
       }
       if(!document){
         const state={dataVersion:CURRENT_DATA_VERSION,projects:restored.projects,tasks:restored.tasks,edges:restored.edges,tracks:restored.tracks,inbox:restored.inbox} as PersistedState;
-        document={...advanceScheduleDocument(state,null,deviceIdRef.current),title:"我的 TimeLine"};
+        document={...advanceScheduleDocument(state,null,deviceIdRef.current,undefined,createLocalId),title:"我的 TimeLine"};
       }
       writeTimelineDocument(localStorage,document);
       const next=upsertTimeline(localStorage,{documentId:document.documentId,title:document.title||"我的 TimeLine",updatedAt:document.updatedAt,temporary:false});
@@ -451,7 +463,7 @@ export function TimelineApp() {
       scheduleDocumentRef.current=document;
       scheduleStorageRef.current=createBrowserScheduleStorage<unknown>(localStorage,timelineDocumentKey(document.documentId));
       if(active){setTimelines(next);setActiveTimelineId(document.documentId);applyPersistedState(document.data);}
-    } catch { if(active)setNotice("保存的数据未能读取，原始数据仍保留在浏览器中。"); return; }
+    } catch(error) { console.error("Failed to restore saved timeline",error);if(active)setNotice("保存的数据未能读取，原始数据仍保留在浏览器中。"); return; }
     if(active)setReady(true);
     })();
     return()=>{active=false;};
@@ -466,6 +478,9 @@ export function TimelineApp() {
   const preserveConflictBackup=(document:ScheduleDocument,label:"local"|"cloud")=>{
     try{localStorage.setItem(SYNC_CONFLICT_BACKUP_KEY,JSON.stringify({savedAt:new Date().toISOString(),label,document}));}catch{}
   };
+  const preserveMergeBackup=(local:ScheduleDocument,cloud:ScheduleDocument)=>{
+    try{localStorage.setItem(SYNC_CONFLICT_BACKUP_KEY,JSON.stringify({savedAt:new Date().toISOString(),label:"merge",documents:{local,cloud}}));}catch{}
+  };
   const activeCloudContext=()=>{
     if(syncProvider==="sites")return {store:new SitesScheduleStore(),scope:"sites"};
     if(syncProvider==="webdav"){
@@ -478,21 +493,45 @@ export function TimelineApp() {
     const storage=scheduleStorageRef.current;if(!storage)return;
     await storage.save(document);
     scheduleDocumentRef.current=document;
+    const updated=upsertTimeline(localStorage,{documentId:document.documentId,title:document.title||"我的 TimeLine",updatedAt:document.updatedAt,temporary:false,cloudBacked:syncProvider==="sites"});
+    setTimelines(updated);
     const context=activeCloudContext();if(!context)throw new Error("sync_provider_unavailable");
     new BrowserSyncCheckpointStore(localStorage,context.scope).save(checkpointFrom({documentId:document.documentId,serverRevision,updatedAt:document.updatedAt,document}));
     applyPersistedState(document.data);
     setLastSyncedAt(new Date().toISOString());setSyncStatus("synced");
   };
-  const performCloudSync=async()=>{
+  const performCloudSync=async(silent=false)=>{
     if(!syncAccount||syncProvider==="local"||(syncProvider==="webdav"&&!webDavEnabled)||!ready||!scheduleDocumentRef.current||timelines.find(item=>item.documentId===activeTimelineId)?.temporary)return;
     if(cloudSyncRunning.current){cloudSyncQueued.current=true;return;}
-    cloudSyncRunning.current=true;setSyncStatus("syncing");
+    cloudSyncRunning.current=true;if(!silent)setSyncStatus("syncing");
     try{
-      const local=scheduleDocumentRef.current;
+      await saveQueueRef.current.catch(()=>undefined);
+      const local=scheduleDocumentRef.current;if(!local)return;
       const context=activeCloudContext();if(!context)throw new Error("sync_provider_unavailable");
       const checkpoints=new BrowserSyncCheckpointStore(localStorage,context.scope);
       const result=await syncScheduleDocument(local,checkpoints.load(local.documentId),context.store);
       if(result.status==="initial-choice"||result.status==="conflict"){
+        if(syncDataPreference==="merge"){
+          preserveMergeBackup(result.local,result.remote.document);
+          const merged=mergeScheduleDocuments(result.local,result.remote.document,deviceIdRef.current);
+          const snapshot=await context.store.save(merged.document,result.remote.serverRevision);
+          await applyCloudDocument(snapshot.document,snapshot.serverRevision);
+          setPendingCloudChoice(null);setNotice(t("两端数据已合并：共 {0} 个事项，跳过 {1} 个重复事项。",merged.stats.totalTasks,merged.stats.deduplicatedTasks));
+          return;
+        }
+        if(syncDataPreference==="cloud"){
+          preserveConflictBackup(result.local,"local");
+          await applyCloudDocument(result.remote.document,result.remote.serverRevision);
+          setPendingCloudChoice(null);setNotice("检测到云端更新，已使用云端数据；此设备原版本已保存为恢复副本。");
+          return;
+        }
+        if(syncDataPreference==="device"){
+          preserveConflictBackup(result.remote.document,"cloud");
+          const snapshot=await context.store.save(result.local,result.remote.serverRevision);
+          checkpoints.save(checkpointFrom(snapshot));setPendingCloudChoice(null);setLastSyncedAt(new Date().toISOString());setSyncStatus("synced");
+          setNotice("检测到两端数据不同，已按默认设置使用此设备数据；云端原版本已保存为恢复副本。");
+          return;
+        }
         setPendingCloudChoice(result);setSyncStatus("conflict");return;
       }
       const checkpoint=result.checkpoint;
@@ -502,14 +541,19 @@ export function TimelineApp() {
       else{setLastSyncedAt(checkpoint.syncedAt);setSyncStatus("synced");}
     }catch(error){
       if(error instanceof SyncRequestError&&error.status===401){setSyncAccount(null);setSyncProvider("local");setWebDavEnabled(false);localStorage.removeItem(SYNC_PROVIDER_KEY);setSyncStatus("local");setNotice("登录状态已失效，请重新登录后开启云同步。");}
-      else if(error instanceof SyncRequestError&&error.code==="webdav_auth_failed"){setSyncStatus("error");setNotice("WebDAV 账号或应用密码不正确。");}
-      else if(error instanceof SyncRequestError&&error.code==="webdav_invalid_document"){setSyncStatus("error");setNotice("WebDAV 文件不是有效的 Squitle 数据。");}
-      else if(error instanceof SyncRequestError&&error.code==="webdav_version_unavailable"){setSyncStatus("error");setNotice("这个 WebDAV 服务未提供文件版本信息，无法安全同步。");}
-      else{setSyncStatus("error");setNotice(syncProvider==="webdav"?"WebDAV 暂时无法连接，本地数据已正常保存。":"云同步暂时失败，本地数据已正常保存。");}
+      else if(!silent&&error instanceof SyncRequestError&&error.code==="webdav_auth_failed"){setSyncStatus("error");setNotice("WebDAV 账号或应用密码不正确。");}
+      else if(!silent&&error instanceof SyncRequestError&&error.code==="webdav_invalid_document"){setSyncStatus("error");setNotice("WebDAV 文件不是有效的 Squitle 数据。");}
+      else if(!silent&&error instanceof SyncRequestError&&error.code==="webdav_version_unavailable"){setSyncStatus("error");setNotice("这个 WebDAV 服务未提供文件版本信息，无法安全同步。");}
+      else if(!silent){setSyncStatus("error");setNotice(syncProvider==="webdav"?"WebDAV 暂时无法连接，本地数据已正常保存。":"云同步暂时失败，本地数据已正常保存。");}
     }finally{
       cloudSyncRunning.current=false;
       if(cloudSyncQueued.current){cloudSyncQueued.current=false;if(cloudSyncTimer.current)clearTimeout(cloudSyncTimer.current);cloudSyncTimer.current=setTimeout(()=>void performCloudSync(),400);}
     }
+  };
+  performCloudSyncRef.current=performCloudSync;
+  const rememberSyncDataPreference=(value:string)=>{
+    const next=(value==="merge"||value==="cloud"||value==="device"?value:"ask") as SyncDataPreference;
+    setSyncDataPreference(next);localStorage.setItem(SYNC_DATA_PREFERENCE_KEY,next);
   };
   const scheduleCloudSync=(delay=1200)=>{
     if(syncProvider==="local"||!syncAccount||(syncProvider==="webdav"&&!webDavEnabled))return;
@@ -561,6 +605,17 @@ export function TimelineApp() {
       setPendingCloudChoice(null);setNotice("已使用云端数据，此设备原版本保存在浏览器恢复副本中。");
     }catch{setSyncStatus("error");setNotice("云端数据未能写入当前浏览器，本地原数据仍然保留。");}
   };
+  const chooseMergeForCloud=async()=>{
+    const choice=pendingCloudChoice;if(!choice)return;
+    try{
+      preserveMergeBackup(choice.local,choice.remote.document);setSyncStatus("syncing");
+      const context=activeCloudContext();if(!context)throw new Error("sync_provider_unavailable");
+      const merged=mergeScheduleDocuments(choice.local,choice.remote.document,deviceIdRef.current);
+      const snapshot=await context.store.save(merged.document,choice.remote.serverRevision);
+      await applyCloudDocument(snapshot.document,snapshot.serverRevision);
+      setPendingCloudChoice(null);setNotice(t("两端数据已合并：共 {0} 个事项，跳过 {1} 个重复事项。",merged.stats.totalTasks,merged.stats.deduplicatedTasks));
+    }catch{setSyncStatus("error");setNotice("云端数据已变化，请重新同步后再选择。");setPendingCloudChoice(null);}
+  };
   useEffect(() => {
     if (!ready) return;
     const storage=scheduleStorageRef.current;
@@ -568,7 +623,8 @@ export function TimelineApp() {
     const snapshot=persistedState;
     saveQueueRef.current=saveQueueRef.current.catch(()=>undefined).then(async()=>{
       const previous=scheduleDocumentRef.current;
-      const next=advanceScheduleDocument(snapshot,previous,deviceIdRef.current);
+      if(previous&&JSON.stringify(previous.data)===JSON.stringify(snapshot))return;
+      const next=advanceScheduleDocument(snapshot,previous,deviceIdRef.current,undefined,createLocalId);
       await storage.save(next,previous?String(previous.revision):undefined);
       scheduleDocumentRef.current=next;
       const entry={documentId:next.documentId,title:next.title||"我的 TimeLine",updatedAt:next.updatedAt,temporary:loadTimelineIndex(localStorage).find(item=>item.documentId===next.documentId)?.temporary??false};
@@ -580,6 +636,27 @@ export function TimelineApp() {
     if(ready&&syncProvider!=="local"&&syncAccount&&(syncProvider!=="webdav"||webDavEnabled))scheduleCloudSync(150);
     return()=>{if(cloudSyncTimer.current)clearTimeout(cloudSyncTimer.current);};
   },[ready,syncProvider,syncAccount,webDavEnabled]);
+  useEffect(()=>{
+    if(!ready||!syncAccount||syncProvider==="local"||(syncProvider==="webdav"&&!webDavEnabled))return;
+    let disposed=false;
+    const check=async()=>{
+      if(disposed||remoteCheckRunning.current||cloudSyncRunning.current||document.visibilityState==="hidden")return;
+      const context=activeCloudContext();if(!scheduleDocumentRef.current||!context)return;
+      remoteCheckRunning.current=true;
+      try{
+        await saveQueueRef.current.catch(()=>undefined);
+        const latest=scheduleDocumentRef.current;if(!latest)return;
+        const checkpoint=new BrowserSyncCheckpointStore(localStorage,context.scope).load(latest.documentId);
+        if(await remoteRevisionChanged(latest.documentId,checkpoint,context.store))await performCloudSyncRef.current(true);
+      }catch(error){if(error instanceof SyncRequestError&&error.status===401)await performCloudSyncRef.current(true);}finally{remoteCheckRunning.current=false;}
+    };
+    const interval=window.setInterval(()=>void check(),syncProvider==="sites"?SITES_REMOTE_CHECK_INTERVAL:WEBDAV_REMOTE_CHECK_INTERVAL);
+    const onFocus=()=>void check();
+    const onVisibility=()=>{if(document.visibilityState==="visible")void check();};
+    window.addEventListener("focus",onFocus);window.addEventListener("online",onFocus);document.addEventListener("visibilitychange",onVisibility);
+    void check();
+    return()=>{disposed=true;window.clearInterval(interval);window.removeEventListener("focus",onFocus);window.removeEventListener("online",onFocus);document.removeEventListener("visibilitychange",onVisibility);};
+  },[ready,syncProvider,syncAccount,webDavEnabled,activeTimelineId]);
   useEffect(() => {
     const context = (document as unknown as { modelContext?: { registerTool: (tool: unknown, options?: { signal?: AbortSignal }) => void | Promise<void> } }).modelContext;
     if (!context?.registerTool) return;
@@ -606,7 +683,7 @@ export function TimelineApp() {
         if (value.projectId && !projects.some(project => project.id === value.projectId)) throw new Error("项目不存在");
         if (!value.title?.trim() || !/^\d{4}-\d{2}-\d{2}$/.test(value.start || "") || !/^\d{4}-\d{2}-\d{2}$/.test(value.end || "")) throw new Error("事项名称与日期格式无效");
         const normalizedEnd=value.end! < value.start! ? value.start! : value.end!;
-        const task: Task = { id: crypto.randomUUID(), title: value.title.trim(), start: value.start!, end: normalizedEnd, projectIds: [value.projectId || projects[0]?.id || "p1"], order: { [value.projectId || projects[0]?.id || "p1"]: tasks.length }, type: value.type || defaultTaskType, status: statusForRange(value.start!,normalizedEnd) };
+        const task: Task = { id: createLocalId(), title: value.title.trim(), start: value.start!, end: normalizedEnd, projectIds: [value.projectId || projects[0]?.id || "p1"], order: { [value.projectId || projects[0]?.id || "p1"]: tasks.length }, type: value.type || defaultTaskType, status: statusForRange(value.start!,normalizedEnd) };
         changeSchedule(current => ({ ...current, tasks: [...current.tasks, task] }));
         return { id: task.id, status: "created" };
       },
@@ -722,6 +799,21 @@ export function TimelineApp() {
     rowPositions.current=next;
   },[visibleRows,drag?.id]);
   useEffect(()=>()=>{for(const animation of [...rowAnimations.current.values(),...dragCounterAnimations.current.values()])animation.cancel();rowAnimations.current.clear();dragCounterAnimations.current.clear();},[]);
+  useEffect(()=>{
+    const element=viewport.current;if(!hydrated||!element)return;
+    const onWheel=(event:WheelEvent)=>{
+      if(event.ctrlKey)return;
+      const delta=horizontalWheelDelta(event.deltaX,event.deltaY,event.shiftKey,event.deltaMode,element.clientHeight);
+      if(!delta)return;
+      event.preventDefault();
+      const next=panViewport(element.scrollLeft,-delta,windowScrollLimit(cellCount*cellWidth,element.clientWidth,frozenWidth),cellWidth);
+      lastScroll.current=next.scrollLeft;
+      flushSync(()=>{if(next.columns)setAnchor(current=>addDays(current,next.columns*stepDays));setScrollOffset(next.scrollLeft);});
+      element.scrollLeft=next.scrollLeft;
+    };
+    element.addEventListener("wheel",onWheel,{passive:false});
+    return()=>element.removeEventListener("wheel",onWheel);
+  },[cellCount,cellWidth,frozenWidth,hydrated,stepDays]);
   const startPan = (event: React.PointerEvent<HTMLDivElement>) => {
     if (!event.isPrimary || event.button !== 0 || (event.target as Element).closest('button,input,select,textarea,[role="button"],[role="separator"]')) return;
     event.preventDefault(); suppressPanClick.current = false;
@@ -857,7 +949,7 @@ export function TimelineApp() {
     const name = newProjectName.trim();
     if (!name || projects.some(project => project.id!==editingProjectId&&project.name.toLocaleLowerCase() === name.toLocaleLowerCase())) return;
     if(editingProjectId){changeSchedule(current=>({...current,projects:current.projects.map(project=>project.id===editingProjectId?{...project,name}:project)}));setEditingProjectId(null);setNewProjectName("");setNewProjectOpen(false);return;}
-    const projectId = crypto.randomUUID();
+    const projectId = createLocalId();
     changeSchedule(current => ({ ...current, projects: [...current.projects, { id: projectId, name, color: nextProjectColor(current.projects.length) }] }));
     setNewProjectName("");
     setNewProjectOpen(false);
@@ -935,7 +1027,7 @@ export function TimelineApp() {
     const targetRow=visibleRows[rowAtY(y)];
     let items=tasks;
     if(slot?.phase==="ready"){
-      items=insertItemRow(items,task.id,slot.projectId,slot.before,crypto.randomUUID());
+      items=insertItemRow(items,task.id,slot.projectId,slot.before,createLocalId());
     } else if(targetRow&&targetRow.kind!=="insert"&&(Math.abs(event.clientY-drag.startY)>12)){
       items=moveItem(items,task.id,targetRow.project.id,targetRow.kind==="task"?targetRow.task:undefined);
     }
@@ -1073,13 +1165,13 @@ export function TimelineApp() {
   const addTaskOutput=()=>{
     const text=newTaskOutput.trim();
     if(!editing||!text)return;
-    setEditing({...editing,outputs:[...taskOutputs(editing),{id:crypto.randomUUID(),text}]});
+    setEditing({...editing,outputs:[...taskOutputs(editing),{id:createLocalId(),text}]});
     setNewTaskOutput("");
   };
   const addEdgeOutput=()=>{
     const text=newEdgeOutput.trim();
     if(!editingEdge||!text)return;
-    const output={id:crypto.randomUUID(),text};
+    const output={id:createLocalId(),text};
     setEdgeSourceOutputs(current=>[...current,output]);
     setEditingEdge(current=>current?{...current,outputIds:[...new Set([...(current.outputIds??[]),output.id])]}:current);
     setNewEdgeOutput("");
@@ -1109,7 +1201,7 @@ export function TimelineApp() {
     const month=start.slice(0,7);
     setCreationMonth(zoom==="month"&&!exact?month:null);setEndingMonth("");
     const range=zoom==="month"&&!exact?monthRange(month):{start,end:iso(addDays(new Date(start+"T00:00:00"),defaultDays-1))};
-    setEditing({ ...emptyTask(projectId), ...range, type:taskTypeForTrack(tasks,tracks,targetRowId,defaultTaskType), status:statusForRange(range.start,range.end), rowId:targetRowId, id: crypto.randomUUID(), order: { [projectId]:targetRowId?(tasks.find(task=>rowId(task)===targetRowId)?.order[projectId]??tasks.length):tasks.length } }); setNewTaskOutput(""); setEditError("");
+    setEditing({ ...emptyTask(projectId), ...range, type:taskTypeForTrack(tasks,tracks,targetRowId,defaultTaskType), status:statusForRange(range.start,range.end), rowId:targetRowId, id: createLocalId(), order: { [projectId]:targetRowId?(tasks.find(task=>rowId(task)===targetRowId)?.order[projectId]??tasks.length):tasks.length } }); setNewTaskOutput(""); setEditError("");
     setEditingEdges([]);
   };
   const createAtPoint=(event:React.MouseEvent<HTMLDivElement>)=>{
@@ -1155,7 +1247,7 @@ export function TimelineApp() {
     await saveQueueRef.current.catch(()=>undefined);
     const freshTasks=initialTasks();
     const state={...persistedState,projects:initialProjects(),tasks:freshTasks,edges:initialEdges(),tracks:tracksFromTasks(freshTasks),inbox:[]} as PersistedState;
-    const document={...advanceScheduleDocument(state,null,deviceIdRef.current),title:"示例 TimeLine"};
+    const document={...advanceScheduleDocument(state,null,deviceIdRef.current,undefined,createLocalId),title:"示例 TimeLine"};
     writeTimelineDocument(localStorage,document);const next=upsertTimeline(localStorage,{documentId:document.documentId,title:document.title,updatedAt:document.updatedAt,temporary:true});rememberActiveTimelineId(localStorage,document.documentId);
     scheduleStorageRef.current=createBrowserScheduleStorage<unknown>(localStorage,timelineDocumentKey(document.documentId));scheduleDocumentRef.current=document;setTimelines(next);setActiveTimelineId(document.documentId);applyPersistedState(document.data);setSelectedTask(null);setSelectedEdge(null);setPasteAnchor(null);setEditing(null);setNotice("已打开新的示例 TimeLine，原数据未受影响。");
   };
@@ -1407,7 +1499,7 @@ export function TimelineApp() {
       if(current.active&&current.target){
         const previousEdge=edges.find(item=>item.id===current.edgeId);
         const source=current.movingEnd==="source"?current.target:current.source;
-        const edge:Dependency={id:current.edgeId??crypto.randomUUID(),source,target:current.movingEnd==="source"?current.source:current.target,outputIds:previousEdge?.source.taskId===source.taskId?[...(previousEdge.outputIds??[])]:[]};
+        const edge:Dependency={id:current.edgeId??createLocalId(),source,target:current.movingEnd==="source"?current.source:current.target,outputIds:previousEdge?.source.taskId===source.taskId?[...(previousEdge.outputIds??[])]:[]};
         const otherEdges=edges.filter(item=>item.id!==current.edgeId);
         if(hasCycle([...otherEdges,edge]))setNotice("这条连线会形成循环依赖，请选择其他事项。");
         else if(otherEdges.some(item=>JSON.stringify(item.source)===JSON.stringify(edge.source)&&JSON.stringify(item.target)===JSON.stringify(edge.target)))setNotice("这两个节点已经连接。");
@@ -1450,7 +1542,7 @@ export function TimelineApp() {
       <Select value="" onValueChange={id => {
         const other = tasks.find(task => task.id === id)!;
         const source = direction === "source" ? other : editing; const target = direction === "source" ? editing : other;
-        setEditingEdges(current => [...current,{ id: crypto.randomUUID(),source: {taskId:source.id,day:duration(source),side:"bottom"},target:{taskId:target.id,day:0,side:"top"} }]);
+        setEditingEdges(current => [...current,{ id: createLocalId(),source: {taskId:source.id,day:duration(source),side:"bottom"},target:{taskId:target.id,day:0,side:"top"} }]);
       }}><SelectTrigger><SelectValue placeholder={t("＋ 添加关联任务")} /></SelectTrigger><SelectContent>{tasks.filter(task => task.id !== editing.id).map(task => <SelectItem key={task.id} value={task.id} className="choice-tile my-1 rounded-md" style={{"--choice-color":colors[task.type]||fallbackColor} as React.CSSProperties}><span className="mr-2 inline-block size-2 rounded-full" style={{background:colors[task.type]||fallbackColor}}/>{t(task.title)}</SelectItem>)}</SelectContent></Select>
       {selected.map(edge => <div key={edge.id} className="choice-tile rounded-lg border p-3 text-sm" style={{"--choice-color":colors[tasks.find(task=>task.id===edge[direction].taskId)?.type||fallbackType]||fallbackColor} as React.CSSProperties}>
         <div className="mb-2 flex items-center justify-between"><span>{t(tasks.find(task => task.id === edge[direction].taskId)?.title??"")}</span><button aria-label={t("移除关系")} onClick={() => setEditingEdges(current => current.filter(item => item.id !== edge.id))}><X size={15}/></button></div>
@@ -1547,7 +1639,7 @@ export function TimelineApp() {
       const task:Task={id:taskId,title:item.text,projectIds:[projectId],order:{[projectId]:tasks.length},type:defaultTaskType,start:date,end:date,status:statusForRange(date,date),urgency:item.urgency,todoKind:item.kind};
       nextTasks=[...nextTasks,task];nextInbox=nextInbox.filter(entry=>entry.id!==item.id);
     }
-    nextTasks=slot?.phase==="ready"?insertItemRow(nextTasks,taskId,projectId,slot.before,crypto.randomUUID()):moveItem(nextTasks,taskId,projectId,target?.task);
+    nextTasks=slot?.phase==="ready"?insertItemRow(nextTasks,taskId,projectId,slot.before,createLocalId()):moveItem(nextTasks,taskId,projectId,target?.task);
     if(!canPlaceItem(nextTasks,taskId,allowTaskOverlap)){setNotice("该位置与其他事项重叠，已回到原位。");return;}
     changeSchedule(current=>({...current,tasks:nextTasks,inbox:nextInbox}));
     setNotice(slot?.phase==="ready"?"已在新行建立一日事项。Ctrl+Z 可撤销。":"已在该行建立一日事项。Ctrl+Z 可撤销。");
@@ -1646,7 +1738,7 @@ export function TimelineApp() {
   const applyColorPreset=(preset:ColorPreset)=>{setPrimaryColor(preset.primary);setColors(current=>{const palette=Object.values(preset.categories);return Object.fromEntries(Object.keys(current).map((name,index)=>[name,preset.categories[name]??palette[index%palette.length]??fallbackColor]));});setTablePalettes(current=>({...current,[preset.mode]:{...preset.table}}));if(theme!==preset.mode)setTheme(preset.mode);};
   const saveColorPreset=()=>{
     const requestedName=presetName.trim();
-    setCustomColorPresets(current=>{const name=requestedName||nextCustomPresetName(current,language==="zh"?"自定义":"Custom");const existing=current.find(item=>item.mode===resolvedTheme&&item.name.toLocaleLowerCase()===name.toLocaleLowerCase());const saved:ColorPreset={id:existing?.id??crypto.randomUUID(),name,mode:resolvedTheme,primary:primaryColor,categories:{...colors},table:{...tablePalettes[resolvedTheme]}};return existing?current.map(item=>item.id===existing.id?saved:item):[...current,saved];});
+    setCustomColorPresets(current=>{const name=requestedName||nextCustomPresetName(current,language==="zh"?"自定义":"Custom");const existing=current.find(item=>item.mode===resolvedTheme&&item.name.toLocaleLowerCase()===name.toLocaleLowerCase());const saved:ColorPreset={id:existing?.id??createLocalId(),name,mode:resolvedTheme,primary:primaryColor,categories:{...colors},table:{...tablePalettes[resolvedTheme]}};return existing?current.map(item=>item.id===existing.id?saved:item):[...current,saved];});
     setPresetName("");setNotice("颜色预设已保存。");
   };
   const exportJson=()=>{
@@ -1676,6 +1768,7 @@ export function TimelineApp() {
   const hoveredSource=hoveredDependency?tasks.find(task=>task.id===hoveredDependency.source.taskId):undefined;
   const hoveredTarget=hoveredDependency?tasks.find(task=>task.id===hoveredDependency.target.taskId):undefined;
   const hoveredOutputs=hoveredDependency&&hoveredSource?dependencyOutputs(hoveredDependency,hoveredSource):[];
+  if(!hydrated)return <main aria-busy="true" className="grid min-h-screen place-items-center bg-[var(--background)] text-[var(--foreground)]"><span className="toolbar-wordmark" aria-label="SquiTLe">SquiTLe</span></main>;
   return <main onClick={event => { if (!(event.target as Element).closest("button,input,select,textarea,[role]")) {setSelectedTask(null);setSelectedEdge(null);if(!(event.target as Element).closest("[data-timeline-canvas]"))setPasteAnchor(null);} }} className="min-h-screen bg-[var(--background)] text-[var(--foreground)]">
     <input ref={importInputRef} className="sr-only" type="file" accept="application/json,.json" onChange={readJsonImport}/>
     {notice&&<div role="status" className="app-toast fixed left-1/2 top-3 z-[150] flex max-w-[calc(100vw-2rem)] -translate-x-1/2 items-center gap-3 rounded-xl border px-4 py-3 text-sm shadow-lg" onMouseEnter={()=>setNoticeHovered(true)} onMouseLeave={()=>setNoticeHovered(false)} onFocusCapture={()=>setNoticeHovered(true)} onBlurCapture={()=>setNoticeHovered(false)}><span>{t(notice)}</span>{projectUndoSeconds>0&&<button className="toast-undo" onClick={undoProjectDelete}>{t("撤回")} <span>{projectUndoSeconds}s</span></button>}<button aria-label={t("关闭提示")} onClick={()=>{setNotice("");setNoticeHovered(false);projectDeleteBackup.current=null;setProjectUndoSeconds(0);}}><X size={15}/></button></div>}
@@ -1711,7 +1804,7 @@ export function TimelineApp() {
     </header>
     <section className={`workspace-shell px-4 py-4 duration-200 motion-reduce:transition-none lg:px-6 ${settingsResizing?"transition-none":"transition-[margin,width]"}`} style={{"--workspace-inset":workspaceInset} as React.CSSProperties}>
 
-      <div className="overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--card)]"><div ref={viewport} onDragOver={event=>{const target=inboxTarget(event);if(target){event.preventDefault();event.dataTransfer.dropEffect="link";trackInsertion(event.clientY);setInboxDrop({left:target.left,top:target.top,height:target.height});}else{setInboxDrop(null);clearInsertion();}}} onDragLeave={event=>{if(!event.currentTarget.contains(event.relatedTarget as Node)){setInboxDrop(null);clearInsertion();}}} onDrop={dropInbox} onScroll={scrollViewport} className="overflow-auto timeline-viewport" style={{overflowAnchor:"none"}}><div className="grid min-w-max" style={{ gridTemplateColumns: `${PROJECT_COLUMN_WIDTH}px ${taskColumnWidth}px ${totalWidth}px` }}>
+      <div className="overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--card)]"><div ref={viewport} onDragOver={event=>{const target=inboxTarget(event);if(target){event.preventDefault();event.dataTransfer.dropEffect="link";trackInsertion(event.clientY);setInboxDrop({left:target.left,top:target.top,height:target.height});}else{setInboxDrop(null);clearInsertion();}}} onDragLeave={event=>{if(!event.currentTarget.contains(event.relatedTarget as Node)){setInboxDrop(null);clearInsertion();}}} onDrop={dropInbox} onScroll={scrollViewport} className="overflow-auto timeline-viewport" style={{overflowAnchor:"none",overscrollBehaviorX:"contain"}}><div className="grid min-w-max" style={{ gridTemplateColumns: `${PROJECT_COLUMN_WIDTH}px ${taskColumnWidth}px ${totalWidth}px` }}>
         <div className="sticky top-0 left-0 z-[95] flex h-[88px] items-end border-b border-r border-[var(--border)] table-project bg-[var(--table-project)] px-4 pb-2 text-sm font-semibold">{t("项目")}</div>
         <div className="sticky top-0 z-[95] flex h-[88px] items-end border-b border-r border-[var(--border)] table-task bg-[var(--table-task)] px-4 pb-2 text-sm font-semibold" style={{left:PROJECT_COLUMN_WIDTH}}>{t("任务轨")}{taskColumnDivider(0)}</div>
         <div className="sticky top-0 z-[70] h-[88px] overflow-clip border-b border-[var(--border)] table-date bg-[var(--table-date)] date-header">
@@ -1741,10 +1834,10 @@ export function TimelineApp() {
             const key=row.kind==="task"?rowId(row.task):row.kind+row.project.id;
             const projectEnd=visibleRows[index+1]?.project.id!==row.project.id;
             return <div key={row.project.id+key} data-row-key={"label-"+key} data-row-kind={row.kind} className="schedule-row absolute left-0 w-full border-b border-r border-[var(--border)] table-task bg-[var(--table-task)]" style={{opacity:row.kind==="task"&&row.tasks.every(task=>task.status==="已完成")&&completedMode==="fade"?appearance.completedOpacity/100:1,top:rowTops[index],height:rowHeight(row),transition:"height 180ms ease",backgroundColor:row.kind==="add"?"var(--table-add)":row.kind==="task"&&rowDrag&&rowId(row.task)===rowId(tasks.find(task=>task.id===rowDrag.taskId)??row.task)?"var(--accent)":undefined,color:row.kind==="add"?"var(--table-add-text)":undefined,borderBottomColor:projectEnd?"var(--table-projectLine)":undefined}}>
-              {row.kind==="insert" ? <div className="insertion-slot flex h-full items-center overflow-hidden px-4 text-xs text-blue-700">{row.phase==="ready" ? t("松开放入新行") : ""}</div> : row.kind==="task" ? (()=>{const track=trackFor(row.task);return <div className="flex h-full items-center gap-2 px-3">
-                <button aria-label={t("拖动整行：{0}", t(track.title))} onPointerDown={event=>startRowDrag(event,row.task,row.project.id)} onClick={event=>event.stopPropagation()} className="row-handle grid h-10 w-5 shrink-0 cursor-grab touch-none place-items-center text-slate-400"><GripVertical size={16}/></button>
-                <button onDoubleClick={()=>openTrackEditor(row.task)} className="min-w-0 flex-1 text-left" title={t("双击编辑任务轨")}><span className="task-row-name block truncate">{t(track.title)}</span><span className="row-details"><span className="category-dot" title={t(track.type)} style={{"--task-color":colors[track.type]??fallbackColor} as React.CSSProperties}/><span className="meta track-type">{t(track.type)}</span><span className="meta track-count">{row.tasks.length} {" "}{t("项")}</span></span></button>
-                <button type="button" className="track-edit grid size-7 shrink-0 place-items-center" aria-label={t("编辑任务轨：{0}",t(track.title))} onClick={()=>openTrackEditor(row.task)}><Pencil size={14}/></button>
+              {row.kind==="insert" ? <div className="insertion-slot flex h-full items-center overflow-hidden px-4 text-xs text-blue-700">{row.phase==="ready" ? t("松开放入新行") : ""}</div> : row.kind==="task" ? (()=>{const track=trackFor(row.task);return <div className="flex h-full items-center gap-0 px-2">
+                <button aria-label={t("拖动整行：{0}", t(track.title))} onPointerDown={event=>startRowDrag(event,row.task,row.project.id)} onClick={event=>event.stopPropagation()} className="row-handle grid h-10 w-4 shrink-0 cursor-grab touch-none place-items-center text-slate-400"><GripVertical size={15}/></button>
+                <button onDoubleClick={()=>openTrackEditor(row.task)} className="min-w-0 flex-1 text-left" title={t("双击编辑任务轨")}><span className="task-row-name block truncate">{t(track.title)}</span><span className="row-details"><span className="category-dot" title={t(track.type)} style={{"--task-color":colors[track.type]??fallbackColor} as React.CSSProperties}/><span className="meta track-type">{t(track.type)}</span></span></button>
+                <span className="track-row-side"><button type="button" className="track-edit grid size-5 place-items-center" aria-label={t("编辑任务轨：{0}",t(track.title))} onClick={()=>openTrackEditor(row.task)}><Pencil size={12}/></button><span className="meta track-count">{row.tasks.length} {" "}{t("项")}</span></span>
               </div>;})() : row.kind==="summary" ? <button className="h-full w-full px-4 text-left text-sm" onClick={()=>toggleProject(row.project.id)}>{t("项目摘要 ·")}{" "}{row.tasks.length} {" "}{t("项")}</button> : row.kind==="empty"&&collapsedProjects.has(row.project.id)?<button className="h-full w-full px-4 text-left text-xs text-[var(--muted-foreground)]" onClick={()=>toggleProject(row.project.id)}>{t("0 项")}</button>:<button className="add-task-link flex h-full w-full items-center gap-2 px-4 text-left text-xs" onClick={()=>addTaskToProject(row.project.id)}><Plus size={14}/>{row.kind==="add" ? t("此项目中的新事项") : t("添加第一个事项")}</button>}
             </div>;
           })}{taskColumnDivider()}
@@ -1856,6 +1949,7 @@ export function TimelineApp() {
           {settingsCategory==="sync"&&<>
             <h3>{t("云同步")}</h3>
             <div className="setting-row"><div><strong>{t("同步方式")}</strong><p>{t("本地保存始终开启；启用云端后，修改会自动同步到自己的其他设备。")}</p></div><Tabs value={syncProvider} onValueChange={value=>value==="sites"?enableCloudSync():value==="webdav"?selectWebDav():disableCloudSync()}><TabsList><TabsTrigger value="local">{t("仅本地")}</TabsTrigger><TabsTrigger value="sites">{t("Squitle 云端")}</TabsTrigger><TabsTrigger value="webdav">WebDAV</TabsTrigger></TabsList></Tabs></div>
+            <div className="setting-row"><div><strong>{t("默认数据源")}</strong><p>{t("首次连接或两端同时修改时，按此选项处理；合并会保留两端独有内容并跳过重复事项。")}</p></div><Tabs value={syncDataPreference} onValueChange={rememberSyncDataPreference}><TabsList><TabsTrigger value="ask">{t("每次询问")}</TabsTrigger><TabsTrigger value="merge">{t("自动合并")}</TabsTrigger><TabsTrigger value="cloud">{t("优先云端")}</TabsTrigger><TabsTrigger value="device">{t("优先此设备")}</TabsTrigger></TabsList></Tabs></div>
             {syncProvider==="webdav"&&<fieldset className="settings-section"><legend>{t("WebDAV 连接")}</legend>
               <div className="setting-row"><div><strong>{t("服务")}</strong></div><Tabs value={webDavService} onValueChange={value=>{const service=value as typeof webDavService;setWebDavService(service);if(service==="nutstore")setWebDavUrl(NUTSTORE_WEBDAV_URL);}}><TabsList><TabsTrigger value="nutstore">{t("坚果云")}</TabsTrigger><TabsTrigger value="custom">{t("其他 WebDAV")}</TabsTrigger></TabsList></Tabs></div>
               <div className="setting-row"><div><strong>{t("文件地址")}</strong><p>{t(webDavService==="nutstore"?"坚果云地址已自动设置，数据保存为根目录下的 squitle.json。":"请输入指向 JSON 文件的完整 HTTPS 地址。")}</p></div><Input data-enter-action="local" className="max-w-sm" value={webDavService==="nutstore"?NUTSTORE_WEBDAV_URL:webDavUrl} disabled={webDavService==="nutstore"} inputMode="url" autoCapitalize="none" spellCheck={false} onChange={event=>setWebDavUrl(event.target.value)} placeholder="https://example.com/dav/squitle.json"/></div>
@@ -1919,7 +2013,7 @@ export function TimelineApp() {
     </div>
       <DialogFooter>{settingsCategory!=="sync"&&<><Button variant="ghost" onClick={saveCategoryDefault}>{t("将当前选项设为默认")}</Button><Button variant="ghost" onClick={()=>resetSettings()}>{t("恢复当前分类")}</Button></>}<Button variant="outline" onClick={resetAllSettings}>{t("恢复全部设置")}</Button><Button variant="secondary" onClick={finishSettings}>{t("完成")}</Button></DialogFooter>
     </DialogContent></Dialog>
-    <AlertDialog open={!!pendingCloudChoice} onOpenChange={open=>{if(!open)setPendingCloudChoice(null);}}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>{t(pendingCloudChoice?.status==="conflict"?"检测到两端都发生了修改":"选择首次同步使用的数据")}</AlertDialogTitle><AlertDialogDescription>{t(pendingCloudChoice?.status==="conflict"?"此设备和云端从上次同步后都发生了变化。请选择保留一个版本；被替换的版本会保存在当前浏览器的恢复副本中。":"云端已有另一份数据。请选择用云端数据覆盖此设备，或用此设备的数据覆盖云端；被替换版本会保存在当前浏览器的恢复副本中。")}</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>{t("稍后处理")}</AlertDialogCancel><Button variant="outline" onClick={()=>void chooseCloudForLocal()}>{t("使用云端数据")}</Button><AlertDialogAction onClick={()=>void chooseLocalForCloud()}>{t("使用此设备数据")}</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
+    <AlertDialog open={!!pendingCloudChoice} onOpenChange={open=>{if(!open)setPendingCloudChoice(null);}}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>{t(pendingCloudChoice?.status==="conflict"?"检测到两端都发生了修改":"选择首次同步使用的数据")}</AlertDialogTitle><AlertDialogDescription>{t(pendingCloudChoice?.status==="conflict"?"此设备和云端从上次同步后都发生了变化。你可以合并两端，或选择保留一个版本；合并前的两份数据都会保存在当前浏览器中。":"云端已有另一份数据。你可以合并两端，或用其中一个版本覆盖另一个；合并会跳过重复事项并保存两份原始数据。")}</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>{t("稍后处理")}</AlertDialogCancel><Button variant="outline" onClick={()=>void chooseMergeForCloud()}>{t("合并两端数据")}</Button><Button variant="outline" onClick={()=>void chooseCloudForLocal()}>{t("使用云端数据")}</Button><AlertDialogAction onClick={()=>void chooseLocalForCloud()}>{t("使用此设备数据")}</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
     <AlertDialog open={!!pendingTimelineDelete} onOpenChange={open=>{if(!open)setPendingTimelineDelete(null);}}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>{t("删除 TimeLine“{0}”？",pendingTimelineDelete?.title??"")}</AlertDialogTitle><AlertDialogDescription>{t("其中的项目、事项、连线和 TodoList 内容都会删除；若已保存到账号，也会从云端删除。此操作无法撤回。")}</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>{t("取消")}</AlertDialogCancel><AlertDialogAction className="bg-[var(--destructive)] text-white hover:bg-[var(--destructive)]/90" onClick={()=>void confirmTimelineDelete()}>{t("确认删除")}</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
     <AlertDialog open={!!pendingImport} onOpenChange={open=>{if(!open)setPendingImport(null);}}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>{t("导入并覆盖当前数据？")}</AlertDialogTitle><AlertDialogDescription>{t("将使用 {0} 中的项目、事项和设置覆盖当前浏览器数据。导入前会在此浏览器保留一份临时恢复副本。",pendingImport?.name??"")}</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>{t("取消")}</AlertDialogCancel><AlertDialogAction onClick={confirmJsonImport}>{t("继续导入")}</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
     <AlertDialog open={!!pendingWorkTypeDelete} onOpenChange={open=>{if(!open)setPendingWorkTypeDelete(null);}}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>{t("删除工作类型“{0}”？",t(pendingWorkTypeDelete??""))}</AlertDialogTitle><AlertDialogDescription>{t("使用此类型的事项将统一改为“{0}”，日期、状态和关系保持不变。",t(workTypes.find(type=>type!==pendingWorkTypeDelete)??fallbackType))}</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>{t("取消")}</AlertDialogCancel><AlertDialogAction className="bg-[var(--destructive)] text-white hover:bg-[var(--destructive)]/90" onClick={confirmWorkTypeDelete}>{t("删除工作类型")}</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>

@@ -36,13 +36,16 @@ test("WebDAV store sends credentials only in the same-origin request body",async
   const connection={url:NUTSTORE_WEBDAV_URL,username:"user@example.com",password:"app-password"};
   const snapshot={documentId:document.documentId,serverRevision:'etag:"abc"',updatedAt:document.updatedAt,document};
   const fetcher=async(input:RequestInfo|URL,init?:RequestInit)=>{
-    calls.push({input:String(input),body:JSON.parse(String(init?.body)) as Record<string,unknown>});
-    return Response.json({snapshot});
+    const body=JSON.parse(String(init?.body)) as Record<string,unknown>;
+    calls.push({input:String(input),body});
+    return Response.json(body.action==="revision"?{revision:snapshot}:{snapshot});
   };
   const store=new WebDavScheduleStore(connection,fetcher as typeof fetch);
   assert.deepEqual(await store.load(document.documentId),snapshot);
+  assert.deepEqual(await store.loadRevision(document.documentId),snapshot);
   assert.deepEqual(await store.save(document,'etag:"old"'),snapshot);
   assert.equal(calls[0].input,"/api/sync/webdav");
   assert.deepEqual(calls[0].body,{action:"load",connection});
-  assert.deepEqual(calls[1].body,{action:"save",connection,document,expectedServerRevision:'etag:"old"'});
+  assert.deepEqual(calls[1].body,{action:"revision",connection,documentId:document.documentId});
+  assert.deepEqual(calls[2].body,{action:"save",connection,document,expectedServerRevision:'etag:"old"'});
 });

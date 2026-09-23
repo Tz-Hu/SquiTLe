@@ -1,6 +1,6 @@
 import {test} from "node:test";
 import assert from "node:assert/strict";
-import {BrowserSyncCheckpointStore,documentFingerprint,syncScheduleDocument,type CloudRevision,type CloudScheduleSnapshot,type CloudScheduleStore} from "../lib/sync/cloud-sync.ts";
+import {BrowserSyncCheckpointStore,documentFingerprint,remoteRevisionChanged,syncScheduleDocument,type CloudRevision,type CloudScheduleSnapshot,type CloudScheduleStore} from "../lib/sync/cloud-sync.ts";
 import {DOCUMENT_KIND,type ScheduleDocument} from "../lib/persistence/persistence.ts";
 
 const document=(revision:number,title:string,device="device-a"):ScheduleDocument=>({
@@ -16,6 +16,7 @@ const document=(revision:number,title:string,device="device-a"):ScheduleDocument
 class MemoryCloud implements CloudScheduleStore{
   snapshot:CloudScheduleSnapshot|null=null;
   async load(){return this.snapshot;}
+  async loadRevision(){return this.snapshot&&{documentId:this.snapshot.documentId,serverRevision:this.snapshot.serverRevision,updatedAt:this.snapshot.updatedAt};}
   async save(value:ScheduleDocument,expected:CloudRevision|null){
     const actual=this.snapshot?.serverRevision??null;
     if(actual!==expected)throw new Error("revision_conflict");
@@ -70,6 +71,15 @@ test("concurrent local and remote changes become an explicit conflict",async()=>
   const result=await syncScheduleDocument(local,{documentId:base.documentId,serverRevision:1,documentFingerprint:documentFingerprint(base),syncedAt:"2026-09-20T00:00:00.000Z"},cloud);
   assert.equal(result.status,"conflict");
   assert.deepEqual(cloud.snapshot.document,remote);
+});
+
+test("lightweight revision checks only request a full sync after the cloud changes",async()=>{
+  const cloud=new MemoryCloud(),base=document(1,"Base");
+  cloud.snapshot={documentId:base.documentId,serverRevision:3,updatedAt:base.updatedAt,document:base};
+  const checkpoint={documentId:base.documentId,serverRevision:3,documentFingerprint:documentFingerprint(base),syncedAt:"2026-09-20T00:00:00.000Z"};
+  assert.equal(await remoteRevisionChanged(base.documentId,checkpoint,cloud),false);
+  cloud.snapshot={...cloud.snapshot,serverRevision:4};
+  assert.equal(await remoteRevisionChanged(base.documentId,checkpoint,cloud),true);
 });
 
 test("checkpoint storage is isolated by document and ignores malformed values",()=>{

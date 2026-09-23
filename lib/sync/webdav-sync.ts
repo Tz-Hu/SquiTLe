@@ -1,4 +1,4 @@
-import type {CloudRevision,CloudScheduleSnapshot,CloudScheduleStore} from "./cloud-sync.ts";
+import type {CloudRevision,CloudRevisionSnapshot,CloudScheduleSnapshot,CloudScheduleStore} from "./cloud-sync.ts";
 import type {ScheduleDocument} from "../persistence/persistence.ts";
 import {jsonRequest,SyncRequestError} from "./sites-sync.ts";
 import type {KeyValueStorage} from "../persistence/storage.ts";
@@ -66,6 +66,14 @@ export class WebDavScheduleStore implements CloudScheduleStore{
       method:"POST",body:JSON.stringify({action:"load",connection:this.connection}),
     });
     return value.snapshot;
+  }
+
+
+  async loadRevision(documentId:string):Promise<CloudRevisionSnapshot|null>{
+    const value=await jsonRequest<{revision:CloudRevisionSnapshot|null}>(this.fetcher,"/api/sync/webdav",{
+      method:"POST",body:JSON.stringify({action:"revision",connection:this.connection,documentId}),
+    });
+    return value.revision;
   }
 
   async save(document:ScheduleDocument,expectedServerRevision:CloudRevision|null):Promise<CloudScheduleSnapshot>{

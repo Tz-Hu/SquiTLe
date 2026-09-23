@@ -11,6 +11,12 @@ export type CloudScheduleSnapshot={
   document:ScheduleDocument;
 };
 
+export type CloudRevisionSnapshot={
+  documentId:string;
+  serverRevision:CloudRevision;
+  updatedAt:string;
+};
+
 export type SyncCheckpoint={
   documentId:string;
   serverRevision:CloudRevision;
@@ -25,7 +31,18 @@ export type SyncResult=
 
 export interface CloudScheduleStore{
   load(documentId:string):Promise<CloudScheduleSnapshot|null>;
+  loadRevision?(documentId:string):Promise<CloudRevisionSnapshot|null>;
   save(document:ScheduleDocument,expectedServerRevision:CloudRevision|null):Promise<CloudScheduleSnapshot>;
+}
+
+export async function remoteRevisionChanged(
+  documentId:string,
+  checkpoint:SyncCheckpoint|null,
+  cloud:CloudScheduleStore,
+){
+  if(!checkpoint||checkpoint.documentId!==documentId||!cloud.loadRevision)return true;
+  const remote=await cloud.loadRevision(documentId);
+  return !remote||remote.serverRevision!==checkpoint.serverRevision;
 }
 
 export function documentFingerprint(document:ScheduleDocument){

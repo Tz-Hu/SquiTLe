@@ -126,9 +126,10 @@ button:focus-visible,[role="button"]:focus-visible { outline:var(--stroke-select
 @media(hover:none) { .project-actions,.project-handle {opacity:1;} }
 .meta { font-size:var(--font-11); color:var(--text-weak); }
 .task-row-name { font-size:var(--font-13); font-weight:400; }
-.row-details { display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:var(--space-8);min-width:0;margin-top:var(--space-4); }
+.row-details { display:grid;grid-template-columns:auto minmax(0,1fr);align-items:center;gap:var(--space-8);min-width:0;margin-top:var(--space-4); }
 .track-type { min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
-.track-count { white-space:nowrap; }
+.track-row-side { display:flex;width:2.5rem;flex-shrink:0;flex-direction:column;align-items:flex-end;justify-content:center;gap:2px; }
+.track-count { white-space:nowrap;line-height:1; }
 .category-dot { display:inline-block;width:var(--category-dot);height:var(--category-dot);border-radius:var(--radius-pill);background:var(--task-color);flex-shrink:0; }
 .status-tag { border:var(--stroke) solid var(--border);border-radius:var(--radius-sm);padding:0 var(--space-4);font-size:var(--font-11);line-height:var(--line-16);color:var(--text-weak); }
 .status-tag[data-status="进行中"] { color:var(--status-progress);border-color:color-mix(in srgb,var(--status-progress) 25%,transparent);background:color-mix(in srgb,var(--status-progress) 12%,transparent); }
