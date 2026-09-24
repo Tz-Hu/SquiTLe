@@ -23,7 +23,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { relatedDepths, hasCycle, deleteProjectContent, dependencyIsCompleted, dependencyOutputs, pruneDependencyOutputs, taskOutputs, type Task, type TaskType, type TaskOutput, type Dependency, type Port } from "@/lib/domain/schedule";
 import { historyOf, commit, undo, redo } from "@/lib/domain/history";
 import { createPortal, flushSync } from "react-dom";
-import { horizontalWheelDelta, panViewport, windowScrollLimit } from "@/lib/presentation/pan";
+import { horizontalWheelDelta, panViewport, wheelBoundaryPan, windowScrollLimit } from "@/lib/presentation/pan";
 import { defaultTablePalettes, migrateTablePalettes, tableColorLabels, tableTextColor, type TableColors, type TablePalettes } from "@/lib/presentation/table-colors";
 import { categoryDefaults, WORK_TYPE_CATALOG_VERSION, layoutTokens, taskBounds, appearanceFields, appearancePresetValues, snapAppearanceValue, defaultAppearance, restoreAppearance, restoreCategories, migrateCategoryCatalog } from "@/lib/presentation/appearance";
 import { moveRow, moveItem, insertItemRow, rowId, canPlaceItem } from "@/lib/domain/rows";
@@ -93,6 +93,13 @@ function PresetTabs({value,options,onChange}:{value:string|number;options:Array<
   return <Tabs className="settings-preset-control" value={String(value)} onValueChange={onChange}><TabsList>{options.map(([label,option])=><TabsTrigger key={String(option)} value={String(option)}>{label}</TabsTrigger>)}</TabsList></Tabs>;
 }
 export function TimelineApp() {
+  const hydrated=useSyncExternalStore(subscribeToHydration,()=>true,()=>false);
+  if(!hydrated)return <main aria-busy="true" className="grid min-h-screen place-items-center bg-[var(--background)] text-[var(--foreground)]"><span className="toolbar-wordmark" aria-label="SquiTLe">SquiTLe</span></main>;
+  return <TimelineWorkspace/>;
+}
+
+// Mount DOM-dependent effects only with the workspace, never with its loading shell.
+function TimelineWorkspace() {
   const {language,setLanguage,t}=useLocale();
   const displayWorkType=(type:string)=>t(type);
   const [history, setHistory] = useState(() => {const tasks=initialTasks();return historyOf<Schedule>({ projects: initialProjects(), tasks, edges: initialEdges(), tracks:tracksFromTasks(tasks), inbox:[] });});
@@ -121,7 +128,6 @@ export function TimelineApp() {
   const [taskColumnWidth,setTaskColumnWidth]=useState(()=>{if(typeof window==="undefined")return TASK_COLUMN_DEFAULT;const saved=Number(localStorage.getItem(TASK_COLUMN_WIDTH_KEY));return Number.isFinite(saved)?Math.max(TASK_COLUMN_MIN,Math.min(TASK_COLUMN_MAX,saved)):TASK_COLUMN_DEFAULT;});
   const taskColumnWidthRef=useRef(taskColumnWidth);
   const taskColumnDrag=useRef<{pointerId:number;startX:number;startWidth:number}|null>(null);
-  const hydrated=useSyncExternalStore(subscribeToHydration,()=>true,()=>false);
   const [ready, setReady] = useState(false);
   const [timelines,setTimelines]=useState<TimelineEntry[]>([]);
   const [activeTimelineId,setActiveTimelineId]=useState("");
@@ -197,11 +203,13 @@ export function TimelineApp() {
     }).catch(()=>{if(active){setSyncAccountChecked(true);setSyncStatus("error");}});
     return()=>{active=false;};
   },[]);
-  useEffect(()=>{
+  useLayoutEffect(()=>{
     const media=window.matchMedia("(min-width: 900px)");
     const update=()=>setWideScreen(media.matches);update();media.addEventListener("change",update);
     const header=headerRef.current;
-    const observer=new ResizeObserver(()=>{if(header){const height=header.getBoundingClientRect().height;setPanelTop(height+12);document.documentElement.style.setProperty("--app-header-height",height+"px");}});
+    const measure=()=>{if(header){const height=header.getBoundingClientRect().height;setPanelTop(height+12);document.documentElement.style.setProperty("--app-header-height",height+"px");}};
+    measure();
+    const observer=new ResizeObserver(measure);
     if(header)observer.observe(header);
     return ()=>{media.removeEventListener("change",update);observer.disconnect();document.documentElement.style.removeProperty("--app-header-height");};
   },[]);
@@ -691,14 +699,16 @@ export function TimelineApp() {
     return () => lifecycle.abort();
   }, [projects, tasks.length, changeSchedule,defaultTaskType,colors]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const element = viewport.current; if (!element) return;
-    const observer = new ResizeObserver(() => {
+    const measure = () => {
       const width=element.clientWidth;
       setViewportWidth(width);
       const next=clampTaskColumnWidth(taskColumnWidthRef.current,width);
       if(next!==taskColumnWidthRef.current){taskColumnWidthRef.current=next;setTaskColumnWidth(next);try{localStorage.setItem(TASK_COLUMN_WIDTH_KEY,String(next));}catch{}}
-    });
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
     observer.observe(element); return () => observer.disconnect();
   }, []);
   const frozenWidth=PROJECT_COLUMN_WIDTH+taskColumnWidth;
@@ -800,20 +810,22 @@ export function TimelineApp() {
   },[visibleRows,drag?.id]);
   useEffect(()=>()=>{for(const animation of [...rowAnimations.current.values(),...dragCounterAnimations.current.values()])animation.cancel();rowAnimations.current.clear();dragCounterAnimations.current.clear();},[]);
   useEffect(()=>{
-    const element=viewport.current;if(!hydrated||!element)return;
+    const element=viewport.current;if(!element)return;
     const onWheel=(event:WheelEvent)=>{
-      if(event.ctrlKey)return;
-      const delta=horizontalWheelDelta(event.deltaX,event.deltaY,event.shiftKey,event.deltaMode,element.clientHeight);
-      if(!delta)return;
+      if(event.ctrlKey||event.defaultPrevented||!event.cancelable)return;
+      const delta=horizontalWheelDelta(event.deltaX,event.deltaY,event.shiftKey,event.deltaMode,element.clientWidth-frozenWidth);
+      const next=wheelBoundaryPan(element.scrollLeft,delta,windowScrollLimit(cellCount*cellWidth,element.clientWidth,frozenWidth),cellWidth);
+      // Let the browser handle ordinary motion (including diagonal motion and
+      // inertia). Only consume overshoot that a finite native scrollbar would lose.
+      if(!next)return;
       event.preventDefault();
-      const next=panViewport(element.scrollLeft,-delta,windowScrollLimit(cellCount*cellWidth,element.clientWidth,frozenWidth),cellWidth);
       lastScroll.current=next.scrollLeft;
       flushSync(()=>{if(next.columns)setAnchor(current=>addDays(current,next.columns*stepDays));setScrollOffset(next.scrollLeft);});
       element.scrollLeft=next.scrollLeft;
     };
     element.addEventListener("wheel",onWheel,{passive:false});
     return()=>element.removeEventListener("wheel",onWheel);
-  },[cellCount,cellWidth,frozenWidth,hydrated,stepDays]);
+  },[cellCount,cellWidth,frozenWidth,stepDays]);
   const startPan = (event: React.PointerEvent<HTMLDivElement>) => {
     if (!event.isPrimary || event.button !== 0 || (event.target as Element).closest('button,input,select,textarea,[role="button"],[role="separator"]')) return;
     event.preventDefault(); suppressPanClick.current = false;
@@ -1768,7 +1780,6 @@ export function TimelineApp() {
   const hoveredSource=hoveredDependency?tasks.find(task=>task.id===hoveredDependency.source.taskId):undefined;
   const hoveredTarget=hoveredDependency?tasks.find(task=>task.id===hoveredDependency.target.taskId):undefined;
   const hoveredOutputs=hoveredDependency&&hoveredSource?dependencyOutputs(hoveredDependency,hoveredSource):[];
-  if(!hydrated)return <main aria-busy="true" className="grid min-h-screen place-items-center bg-[var(--background)] text-[var(--foreground)]"><span className="toolbar-wordmark" aria-label="SquiTLe">SquiTLe</span></main>;
   return <main onClick={event => { if (!(event.target as Element).closest("button,input,select,textarea,[role]")) {setSelectedTask(null);setSelectedEdge(null);if(!(event.target as Element).closest("[data-timeline-canvas]"))setPasteAnchor(null);} }} className="min-h-screen bg-[var(--background)] text-[var(--foreground)]">
     <input ref={importInputRef} className="sr-only" type="file" accept="application/json,.json" onChange={readJsonImport}/>
     {notice&&<div role="status" className="app-toast fixed left-1/2 top-3 z-[150] flex max-w-[calc(100vw-2rem)] -translate-x-1/2 items-center gap-3 rounded-xl border px-4 py-3 text-sm shadow-lg" onMouseEnter={()=>setNoticeHovered(true)} onMouseLeave={()=>setNoticeHovered(false)} onFocusCapture={()=>setNoticeHovered(true)} onBlurCapture={()=>setNoticeHovered(false)}><span>{t(notice)}</span>{projectUndoSeconds>0&&<button className="toast-undo" onClick={undoProjectDelete}>{t("撤回")} <span>{projectUndoSeconds}s</span></button>}<button aria-label={t("关闭提示")} onClick={()=>{setNotice("");setNoticeHovered(false);projectDeleteBackup.current=null;setProjectUndoSeconds(0);}}><X size={15}/></button></div>}
