@@ -1,5 +1,8 @@
 export type Language="zh"|"en";
 export const english:Record<string,string>={
+"关于 SquiTLe":"About SquiTLe",
+"GitHub 仓库":"GitHub repository",
+"GitHub 仓库（在新标签页打开）":"GitHub repository (opens in a new tab)",
 "拖动调整事项列宽度":"Drag to resize the task column",
 "拖动调整设置导航宽度":"Drag to resize the settings navigation",
 "{0}项目操作":"Actions for {0}",

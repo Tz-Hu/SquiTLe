@@ -23,7 +23,7 @@
 .daily-cell-anchor { display:block;flex-shrink:0;height:100%; }
 .daily-cell { display:flex; flex-shrink:0; flex-wrap:wrap; align-content:center; justify-content:center; gap:2px; overflow:hidden; height:100%; padding:var(--space-4) 0; border-right:1px solid var(--border); border-bottom:1px solid var(--border); }
 .daily-dot { display:inline-block; flex-shrink:0; width:4px; height:4px; border-radius:50%; }
-.daily-dot[data-done="true"] { opacity:.4; }
+.daily-dot[data-done="true"] { opacity:.25; }
 .daily-card[data-slot="hover-card-content"] { z-index:98; width:min(320px,calc(100vw - 32px)); max-height:50dvh; overflow:auto; background:var(--popover); color:var(--foreground); border-color:var(--border); }
 .daily-card-heading { display:flex;align-items:baseline;justify-content:space-between;gap:var(--space-12);padding-bottom:var(--space-4);border-bottom:1px solid var(--border); }
 .daily-card > .meta { margin-top:var(--space-12); }
@@ -244,7 +244,8 @@ html[lang="en"] .status-tag { white-space:nowrap; }
 .choice-tile { background:color-mix(in srgb,var(--choice-color) var(--bar-fill),transparent);border-color:color-mix(in srgb,var(--choice-color) var(--bar-border),transparent);color:color-mix(in srgb,var(--choice-color) 72%,var(--task-text-mix)); }
 .choice-tile[data-active="true"] { background:color-mix(in srgb,var(--choice-color) var(--bar-hover-fill),transparent);border-color:var(--choice-color); }
 .task-editor { container-type:inline-size; }
-.task-choice-grid { grid-template-columns:repeat(auto-fit,minmax(118px,1fr)); }
+.task-choice-list { display:flex;flex-wrap:wrap;gap:0.5rem; }
+.task-choice-list > .choice-tile { flex:0 1 auto;max-width:100%;overflow-wrap:anywhere; }
 .status-choice-grid { grid-template-columns:repeat(3,minmax(0,1fr)); }
 .custom-type-editor { display:grid;grid-template-columns:minmax(0,1fr) 36px auto;align-items:center;gap:var(--space-8); }
 .custom-type-editor input[type="color"] { width:36px;height:36px;padding:2px;border:var(--stroke) solid var(--border);border-radius:var(--radius-sm);background:var(--card); }
