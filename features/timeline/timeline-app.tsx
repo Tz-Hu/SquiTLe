@@ -1,4 +1,5 @@
 "use client";
+import {LocalEditTracker,sharedState,sameSyncDocument} from "@/lib/sync/local-edit-tracker";
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { addDays, addMonths, startOfMonth, differenceInCalendarDays, format, startOfDay } from "date-fns";
@@ -48,7 +49,7 @@ import {obstaclesNearRoute} from "@/lib/presentation/connection-routing";
 import {BrowserSyncCheckpointStore,checkpointFrom,remoteRevisionChanged,syncScheduleDocument,type CloudRevision,type SyncResult} from "@/lib/sync/cloud-sync";
 import {mergeScheduleDocuments} from "@/lib/sync/merge-documents";
 import {deleteCloudTimeline,loadCloudTimelines,loadSyncAccount,renameCloudTimeline,SitesScheduleStore,SyncRequestError,type SyncAccount} from "@/lib/sync/sites-sync";
-import {millisecondsUntilNextTodayMarker,todayMarkerFraction} from "@/lib/presentation/today-marker";
+import {millisecondsUntilNextTodayMarker,todayMarkerFraction,TODAY_BAND_DAYS,restoreTodayMarkerStyle,type TodayMarkerStyle} from "@/lib/presentation/today-marker";
 import {loadWebDavConnection,NUTSTORE_WEBDAV_URL,saveWebDavConnection,validateWebDavConnection,WebDavScheduleStore,webDavCheckpointScope,type WebDavConnection} from "@/lib/sync/webdav-sync";
 import {activeTimelineId as loadActiveTimelineId,loadTimelineIndex,mergeTimelineEntries,readTimelineDocument,removeTimeline,saveTimelineIndex,setActiveTimelineId as rememberActiveTimelineId,upsertTimeline,writeTimelineDocument,type TimelineEntry} from "@/lib/persistence/timeline-library";
 import {copyTaskSnapshot,parseTaskClipboard,taskFromClipboard,TASK_CLIPBOARD_STORAGE_KEY,type TaskClipboardPayload} from "@/lib/domain/task-clipboard";
@@ -67,6 +68,10 @@ const FOLDED_PLACEHOLDER_FRACTION=1/4;
 type SyncProvider="local"|"sites"|"webdav";
 type SyncDataPreference="ask"|"merge"|"cloud"|"device";
 type EdgeLevel="thin"|"regular"|"thick"|"bold";
+type ArrowShape="standard"|"wide-triangle"|"wide-chevron";
+const restoreArrowShape=(value:unknown):ArrowShape=>value==="wide-triangle"||value==="wide-chevron"?value:"standard";
+const arrowDimensions=(shape:ArrowShape,size:number)=>({width:size*(shape==="standard"?1:shape==="wide-triangle"?1.8:2),height:size*(shape==="standard"?1:shape==="wide-triangle"?.65:.6)});
+const arrowPath=(x:number,y:number,direction:number,width:number,height:number,shape:ArrowShape)=>`M ${x-width/2} ${y+direction*height} L ${x} ${y} L ${x+width/2} ${y+direction*height}${shape==="wide-chevron"?"":" Z"}`;
 type ArrowLevel="small"|"regular"|"large"|"xlarge";
 const edgeStrokeByLevel:Record<EdgeLevel,number>={thin:.75,regular:1,thick:1.5,bold:2};
 const arrowSizeByLevel:Record<ArrowLevel,number>={small:4,regular:5,large:7,xlarge:9};
@@ -74,9 +79,9 @@ const subscribeToHydration=()=>()=>{};
 
 type PersonalDefaults=Partial<{
   general:{editorMode:"panel"|"dialog"};
-  timeline:{weekStart:0|1;dayWidth:number;timelineRowHeight:number;insertionDelay:number;weekends:boolean;weekBoundaries:boolean};
+  timeline:{todayMarkerStyle:TodayMarkerStyle;weekStart:0|1;dayWidth:number;timelineRowHeight:number;insertionDelay:number;weekends:boolean;weekBoundaries:boolean};
   tasks:{defaultDays:number;defaultTaskType:TaskType;allowTaskOverlap:boolean;hoverSpeed:"fast"|"medium"|"slow";taskHoverHints:boolean;completedMode:"fade"|"normal"|"hide";barHeight:number;barRadius:number;barFill:number;completedOpacity:number};
-  links:{handleGap:number;handleWidth:number;autoConnectionSides:boolean;lineOpacity:number;edgeLevel:EdgeLevel;arrowLevel:ArrowLevel};
+  links:{handleGap:number;handleWidth:number;autoConnectionSides:boolean;lineOpacity:number;edgeLevel:EdgeLevel;arrowLevel:ArrowLevel;arrowShape:ArrowShape};
   inbox:{inboxKind:InboxKind;inboxCompleted:"show"|"hide"};
   appearance:{theme:"light"|"dark"|"system";primaryColor:string;collapsedProjectColor:string;collapsedOpacity:number;colors:Record<string,string>;tablePalettes:TablePalettes};
 }>;
@@ -135,11 +140,15 @@ function TimelineWorkspace() {
   const [pendingTimelineDelete,setPendingTimelineDelete]=useState<TimelineEntry|null>(null);
   const scheduleStorageRef=useRef<ScheduleStorage<unknown>|null>(null);
   const scheduleDocumentRef=useRef<ScheduleDocument|null>(null);
+  const localEditTracker=useRef(new LocalEditTracker());
+  const renderedSyncState=useRef("");
+  const syncContextRef=useRef("");
   const deviceIdRef=useRef("");
   const saveQueueRef=useRef<Promise<void>>(Promise.resolve());
   const [zoom, setZoom] = useState<"day" | "week" | "month">("day");
   const [anchor, setAnchor] = useState(() => addDays(startOfDay(new Date()), -7));
   const [todayMarkerTime,setTodayMarkerTime]=useState(()=>new Date());
+  const [todayMarkerStyle,setTodayMarkerStyle]=useState<TodayMarkerStyle>("band");
   const [scrollOffset,setScrollOffset]=useState(0);
   const [creationMonth,setCreationMonth]=useState<string|null>(null);
   const [endingMonth,setEndingMonth]=useState("");
@@ -285,9 +294,11 @@ function TimelineWorkspace() {
   },[theme,tablePalettes]);
   const [handleWidth,setHandleWidth]=useState(6);
   const [edgeLevel,setEdgeLevel]=useState<EdgeLevel>("regular");
+  const [arrowShape,setArrowShape]=useState<ArrowShape>("standard");
   const [arrowLevel,setArrowLevel]=useState<ArrowLevel>("regular");
   const [personalDefaults,setPersonalDefaults]=useState<PersonalDefaults>({});
   const edgeStroke=edgeStrokeByLevel[edgeLevel],arrowSize=arrowSizeByLevel[arrowLevel];
+  const {width:arrowWidth,height:arrowHeight}=arrowDimensions(arrowShape,arrowSize);
   const [autoConnectionSides,setAutoConnectionSides]=useState(true);
   const [defaultDays,setDefaultDays]=useState(4);
   const [inboxKind,setInboxKind]=useState<InboxKind>("checklist");
@@ -374,7 +385,8 @@ function TimelineWorkspace() {
   },[panelMode,settingsOpen]);
   useEffect(()=>{const layout=settingsLayoutRef.current;if(!layout||!settingsOpen)return;const observer=new ResizeObserver(()=>{const next=clampSettingsNavWidth(settingsNavWidthRef.current,layout.getBoundingClientRect().width);if(next!==settingsNavWidthRef.current)rememberSettingsNavWidth(next,layout.getBoundingClientRect().width);});observer.observe(layout);return()=>observer.disconnect();},[settingsOpen,rememberSettingsNavWidth]);
 
-  const applyPersistedState=(state:PersistedState)=>{
+  const applyPersistedState=(state:PersistedState,origin:"restore"|"edit"="restore")=>{
+        if(origin==="restore")localEditTracker.current.restore();
         const restoredTasks=state.tasks as Task[];
         const restored:Schedule = { projects: state.projects as Project[], tasks: restoredTasks, edges: state.edges as Dependency[], tracks:reconcileTracks(restoredTasks,state.tracks as TaskTrack[]), inbox:restoreInbox(state.inbox) };
         const restoredColors=migrateCategoryCatalog(state.categoryColors,state.workTypeCatalogVersion);
@@ -392,10 +404,12 @@ function TimelineWorkspace() {
         setColors(restoredColors);
         setCustomColorPresets(restoreCustomColorPresets(state.customColorPresets));
         setAppearance(restoreAppearance(state.appearance));
+        setTodayMarkerStyle(restoreTodayMarkerStyle(state.todayMarkerStyle));
         if(Number.isFinite(state.handleGap))setHandleGap(nearestPreset(state.handleGap,[2,4,8,12]));
         if(Number.isFinite(state.handleWidth))setHandleWidth(nearestPreset(state.handleWidth,[4,6,8,10]));
         if(["thin","regular","thick","bold"].includes(state.edgeLevel))setEdgeLevel(state.edgeLevel);
         if(["small","regular","large","xlarge"].includes(state.arrowLevel))setArrowLevel(state.arrowLevel);
+        setArrowShape(restoreArrowShape(state.arrowShape));
         if(state.personalDefaults&&typeof state.personalDefaults==="object")setPersonalDefaults(state.personalDefaults);
         if(typeof state.autoConnectionSides==="boolean")setAutoConnectionSides(state.autoConnectionSides);
         if(Number.isFinite(state.defaultDays))setDefaultDays(Math.max(1,Math.min(365,Math.round(state.defaultDays))));
@@ -409,7 +423,7 @@ function TimelineWorkspace() {
         if(["fade","normal","hide"].includes(state.completedMode))setCompletedMode(state.completedMode);
         if(Number.isFinite(state.insertionDelay))setInsertionDelay(nearestPreset(state.insertionDelay,[150,300,600]));
         if(state.inboxCompleted==="show"||state.inboxCompleted==="hide")setInboxCompleted(state.inboxCompleted);
-        {const directWidth=Number(localStorage.getItem(SETTINGS_WIDTH_KEY));if(Number.isFinite(directWidth))rememberSettingsWidth(directWidth);else if(Number.isFinite(state.settingsWidth))rememberSettingsWidth(state.settingsWidth);}
+        {const rawWidth=localStorage.getItem(SETTINGS_WIDTH_KEY),directWidth=Number(rawWidth);if(rawWidth!==null&&Number.isFinite(directWidth))rememberSettingsWidth(directWidth);else if(Number.isFinite(state.settingsWidth))rememberSettingsWidth(state.settingsWidth);}
         const savedSize=state.inboxSize as {width?:number;height?:number}|undefined;
         if(Number.isFinite(savedSize?.width)&&Number.isFinite(savedSize?.height))setInboxSize({width:Math.max(260,Math.min(720,savedSize!.width!)),height:Math.max(160,Math.min(720,savedSize!.height!))});
         setHistory(historyOf(restored));
@@ -482,7 +496,9 @@ function TimelineWorkspace() {
     void loadCloudTimelines().then(cloud=>{if(!active)return;const merged=mergeTimelineEntries(loadTimelineIndex(localStorage),cloud);saveTimelineIndex(localStorage,merged);setTimelines(merged);}).catch(()=>undefined);
     return()=>{active=false;};
   },[ready,syncAccount]);
-  const persistedState={ dataVersion:CURRENT_DATA_VERSION, workTypeCatalogVersion:WORK_TYPE_CATALOG_VERSION, projects, tasks, edges, tracks, inbox, inboxKind, inboxSort, inboxCollapsed, collapsed: [...collapsedProjects], defaultDays, allowTaskOverlap, autoConnectionSides, handleWidth, handleGap, edgeLevel, arrowLevel, personalDefaults, theme, primaryColor, collapsedProjectColor, tablePalettes, paletteVersion:2, categoryColors:colors, customColorPresets, appearance, editorMode, settingsWidth, timelineRowHeight, dayWidth, weekStart, defaultTaskType, hoverSpeed, taskHoverHints, completedMode, insertionDelay, inboxCompleted, inboxSize };
+  const persistedState={ dataVersion:CURRENT_DATA_VERSION, workTypeCatalogVersion:WORK_TYPE_CATALOG_VERSION, projects, tasks, edges, tracks, inbox, inboxKind, inboxSort, inboxCollapsed, collapsed: [...collapsedProjects], defaultDays, allowTaskOverlap, autoConnectionSides, handleWidth, handleGap, edgeLevel, arrowLevel, arrowShape, todayMarkerStyle, personalDefaults, theme, primaryColor, collapsedProjectColor, tablePalettes, paletteVersion:2, categoryColors:colors, customColorPresets, appearance, editorMode, timelineRowHeight, dayWidth, weekStart, defaultTaskType, hoverSpeed, taskHoverHints, completedMode, insertionDelay, inboxCompleted, inboxSize };
+  renderedSyncState.current=JSON.stringify(sharedState(persistedState));
+  syncContextRef.current=`${syncProvider}:${activeTimelineId}`;
   const preserveConflictBackup=(document:ScheduleDocument,label:"local"|"cloud")=>{
     try{localStorage.setItem(SYNC_CONFLICT_BACKUP_KEY,JSON.stringify({savedAt:new Date().toISOString(),label,document}));}catch{}
   };
@@ -497,9 +513,14 @@ function TimelineWorkspace() {
     }
     return null;
   };
-  const applyCloudDocument=async(document:ScheduleDocument,serverRevision:CloudRevision)=>{
-    const storage=scheduleStorageRef.current;if(!storage)return;
-    await storage.save(document);
+  const applyCloudDocument=async(document:ScheduleDocument,serverRevision:CloudRevision,expected:ScheduleDocument,rendered=renderedSyncState.current,scope=syncContextRef.current)=>{
+    await saveQueueRef.current;
+    if(scope!==syncContextRef.current||rendered!==renderedSyncState.current||!sameSyncDocument(expected,scheduleDocumentRef.current)){
+      cloudSyncQueued.current=true;
+      throw new Error("local_changed_during_sync");
+    }
+    // Synchronous local write and state handoff: no edit can interleave here.
+    writeTimelineDocument(localStorage,document);
     scheduleDocumentRef.current=document;
     const updated=upsertTimeline(localStorage,{documentId:document.documentId,title:document.title||"我的 TimeLine",updatedAt:document.updatedAt,temporary:false,cloudBacked:syncProvider==="sites"});
     setTimelines(updated);
@@ -517,19 +538,30 @@ function TimelineWorkspace() {
       const local=scheduleDocumentRef.current;if(!local)return;
       const context=activeCloudContext();if(!context)throw new Error("sync_provider_unavailable");
       const checkpoints=new BrowserSyncCheckpointStore(localStorage,context.scope);
+      const rendered=renderedSyncState.current,scope=syncContextRef.current;
       const result=await syncScheduleDocument(local,checkpoints.load(local.documentId),context.store);
-      if(result.status==="initial-choice"||result.status==="conflict"){
+      await saveQueueRef.current;
+      if(scope!==syncContextRef.current)return;
+      if(rendered!==renderedSyncState.current||!sameSyncDocument(local,scheduleDocumentRef.current)){
+        if(result.status==="uploaded"||result.status==="current")checkpoints.save(result.checkpoint);
+        cloudSyncQueued.current=true;return;
+      }
+      if(result.status==="conflict"){
+        preserveMergeBackup(result.local,result.remote.document);
+        setPendingCloudChoice(result);setSyncStatus("conflict");return;
+      }
+      if(result.status==="initial-choice"){
         if(syncDataPreference==="merge"){
           preserveMergeBackup(result.local,result.remote.document);
           const merged=mergeScheduleDocuments(result.local,result.remote.document,deviceIdRef.current);
           const snapshot=await context.store.save(merged.document,result.remote.serverRevision);
-          await applyCloudDocument(snapshot.document,snapshot.serverRevision);
+          await applyCloudDocument(snapshot.document,snapshot.serverRevision,local,rendered,scope);
           setPendingCloudChoice(null);setNotice(t("两端数据已合并：共 {0} 个事项，跳过 {1} 个重复事项。",merged.stats.totalTasks,merged.stats.deduplicatedTasks));
           return;
         }
         if(syncDataPreference==="cloud"){
           preserveConflictBackup(result.local,"local");
-          await applyCloudDocument(result.remote.document,result.remote.serverRevision);
+          await applyCloudDocument(result.remote.document,result.remote.serverRevision,local,rendered,scope);
           setPendingCloudChoice(null);setNotice("检测到云端更新，已使用云端数据；此设备原版本已保存为恢复副本。");
           return;
         }
@@ -544,18 +576,18 @@ function TimelineWorkspace() {
       }
       const checkpoint=result.checkpoint;
       if(!checkpoint)throw new Error("sync_checkpoint_missing");
-      checkpoints.save(checkpoint);
-      if(result.status==="downloaded")await applyCloudDocument(result.document,checkpoint.serverRevision);
-      else{setLastSyncedAt(checkpoint.syncedAt);setSyncStatus("synced");}
+      if(result.status==="downloaded")await applyCloudDocument(result.document,checkpoint.serverRevision,local,rendered,scope);
+      else{checkpoints.save(checkpoint);setLastSyncedAt(checkpoint.syncedAt);setSyncStatus("synced");}
     }catch(error){
-      if(error instanceof SyncRequestError&&error.status===401){setSyncAccount(null);setSyncProvider("local");setWebDavEnabled(false);localStorage.removeItem(SYNC_PROVIDER_KEY);setSyncStatus("local");setNotice("登录状态已失效，请重新登录后开启云同步。");}
+      if(error instanceof Error&&error.message==="local_changed_during_sync"){setSyncStatus("idle");}
+      else if(error instanceof SyncRequestError&&error.status===401){setSyncAccount(null);setSyncProvider("local");setWebDavEnabled(false);localStorage.removeItem(SYNC_PROVIDER_KEY);setSyncStatus("local");setNotice("登录状态已失效，请重新登录后开启云同步。");}
       else if(!silent&&error instanceof SyncRequestError&&error.code==="webdav_auth_failed"){setSyncStatus("error");setNotice("WebDAV 账号或应用密码不正确。");}
       else if(!silent&&error instanceof SyncRequestError&&error.code==="webdav_invalid_document"){setSyncStatus("error");setNotice("WebDAV 文件不是有效的 Squitle 数据。");}
       else if(!silent&&error instanceof SyncRequestError&&error.code==="webdav_version_unavailable"){setSyncStatus("error");setNotice("这个 WebDAV 服务未提供文件版本信息，无法安全同步。");}
       else if(!silent){setSyncStatus("error");setNotice(syncProvider==="webdav"?"WebDAV 暂时无法连接，本地数据已正常保存。":"云同步暂时失败，本地数据已正常保存。");}
     }finally{
       cloudSyncRunning.current=false;
-      if(cloudSyncQueued.current){cloudSyncQueued.current=false;if(cloudSyncTimer.current)clearTimeout(cloudSyncTimer.current);cloudSyncTimer.current=setTimeout(()=>void performCloudSync(),400);}
+      if(cloudSyncQueued.current){cloudSyncQueued.current=false;if(cloudSyncTimer.current)clearTimeout(cloudSyncTimer.current);cloudSyncTimer.current=setTimeout(()=>void performCloudSyncRef.current(),400);}
     }
   };
   performCloudSyncRef.current=performCloudSync;
@@ -566,7 +598,7 @@ function TimelineWorkspace() {
   const scheduleCloudSync=(delay=1200)=>{
     if(syncProvider==="local"||!syncAccount||(syncProvider==="webdav"&&!webDavEnabled))return;
     if(cloudSyncTimer.current)clearTimeout(cloudSyncTimer.current);
-    cloudSyncTimer.current=setTimeout(()=>void performCloudSync(),delay);
+    cloudSyncTimer.current=setTimeout(()=>void performCloudSyncRef.current(),delay);
   };
   const enableCloudSync=()=>{
     if(!syncAccount){window.location.assign("/sync");return;}
@@ -596,42 +628,60 @@ function TimelineWorkspace() {
     }finally{setWebDavTesting(false);}
   };
   const chooseLocalForCloud=async()=>{
-    const choice=pendingCloudChoice;if(!choice)return;
+    const choice=pendingCloudChoice;if(!choice||cloudSyncRunning.current)return;
+    cloudSyncRunning.current=true;
+    const choiceRendered=renderedSyncState.current,choiceScope=syncContextRef.current;
     try{
+      await saveQueueRef.current;
+      if(choiceScope!==syncContextRef.current||choiceRendered!==renderedSyncState.current||!sameSyncDocument(choice.local,scheduleDocumentRef.current))throw new Error("stale_sync_choice");
       preserveConflictBackup(choice.remote.document,"cloud");setSyncStatus("syncing");
       const context=activeCloudContext();if(!context)throw new Error("sync_provider_unavailable");
       const snapshot=await context.store.save(choice.local,choice.remote.serverRevision);
       new BrowserSyncCheckpointStore(localStorage,context.scope).save(checkpointFrom(snapshot));
       setPendingCloudChoice(null);setLastSyncedAt(new Date().toISOString());setSyncStatus("synced");setNotice("已使用此设备的数据，云端原版本保存在浏览器恢复副本中。");
     }catch{setSyncStatus("error");setNotice("云端数据已变化，请重新同步后再选择。");setPendingCloudChoice(null);}
+    finally{cloudSyncRunning.current=false;if(cloudSyncQueued.current){cloudSyncQueued.current=false;scheduleCloudSync(400);}}
   };
   const chooseCloudForLocal=async()=>{
-    const choice=pendingCloudChoice;if(!choice)return;
+    const choice=pendingCloudChoice;if(!choice||cloudSyncRunning.current)return;
+    cloudSyncRunning.current=true;
+    const choiceRendered=renderedSyncState.current,choiceScope=syncContextRef.current;
     try{
+      await saveQueueRef.current;
+      if(choiceScope!==syncContextRef.current||choiceRendered!==renderedSyncState.current||!sameSyncDocument(choice.local,scheduleDocumentRef.current))throw new Error("stale_sync_choice");
       preserveConflictBackup(choice.local,"local");setSyncStatus("syncing");
-      await applyCloudDocument(choice.remote.document,choice.remote.serverRevision);
+      await applyCloudDocument(choice.remote.document,choice.remote.serverRevision,choice.local,choiceRendered,choiceScope);
       setPendingCloudChoice(null);setNotice("已使用云端数据，此设备原版本保存在浏览器恢复副本中。");
-    }catch{setSyncStatus("error");setNotice("云端数据未能写入当前浏览器，本地原数据仍然保留。");}
+    }catch{setSyncStatus("error");setNotice("本地数据已变化或写入失败，请重新同步后再选择。");setPendingCloudChoice(null);}
+    finally{cloudSyncRunning.current=false;if(cloudSyncQueued.current){cloudSyncQueued.current=false;scheduleCloudSync(400);}}
   };
   const chooseMergeForCloud=async()=>{
-    const choice=pendingCloudChoice;if(!choice)return;
+    const choice=pendingCloudChoice;if(!choice||cloudSyncRunning.current)return;
+    cloudSyncRunning.current=true;
+    const choiceRendered=renderedSyncState.current,choiceScope=syncContextRef.current;
     try{
+      await saveQueueRef.current;
+      if(choiceScope!==syncContextRef.current||choiceRendered!==renderedSyncState.current||!sameSyncDocument(choice.local,scheduleDocumentRef.current))throw new Error("stale_sync_choice");
       preserveMergeBackup(choice.local,choice.remote.document);setSyncStatus("syncing");
       const context=activeCloudContext();if(!context)throw new Error("sync_provider_unavailable");
       const merged=mergeScheduleDocuments(choice.local,choice.remote.document,deviceIdRef.current);
       const snapshot=await context.store.save(merged.document,choice.remote.serverRevision);
-      await applyCloudDocument(snapshot.document,snapshot.serverRevision);
+      await applyCloudDocument(snapshot.document,snapshot.serverRevision,choice.local,choiceRendered,choiceScope);
       setPendingCloudChoice(null);setNotice(t("两端数据已合并：共 {0} 个事项，跳过 {1} 个重复事项。",merged.stats.totalTasks,merged.stats.deduplicatedTasks));
     }catch{setSyncStatus("error");setNotice("云端数据已变化，请重新同步后再选择。");setPendingCloudChoice(null);}
+    finally{cloudSyncRunning.current=false;if(cloudSyncQueued.current){cloudSyncQueued.current=false;scheduleCloudSync(400);}}
   };
   useEffect(() => {
     if (!ready) return;
     const storage=scheduleStorageRef.current;
     if(!storage)return;
-    const snapshot=persistedState;
+    const snapshot=sharedState(persistedState);
+    if(!localEditTracker.current.observe(snapshot))return;
+    const documentId=scheduleDocumentRef.current?.documentId;
     saveQueueRef.current=saveQueueRef.current.catch(()=>undefined).then(async()=>{
       const previous=scheduleDocumentRef.current;
-      if(previous&&JSON.stringify(previous.data)===JSON.stringify(snapshot))return;
+      if(!previous||previous.documentId!==documentId)return;
+      if(JSON.stringify(sharedState(previous.data))===JSON.stringify(snapshot))return;
       const next=advanceScheduleDocument(snapshot,previous,deviceIdRef.current,undefined,createLocalId);
       await storage.save(next,previous?String(previous.revision):undefined);
       scheduleDocumentRef.current=next;
@@ -639,7 +689,7 @@ function TimelineWorkspace() {
       const updated=upsertTimeline(localStorage,entry);setTimelines(updated);
       scheduleCloudSync();
     }).catch(()=>setNotice("浏览器未能保存，请检查存储空间。"));
-  }, [projects, tasks, edges, tracks, inbox, inboxKind, inboxSort, inboxCollapsed, collapsedProjects, defaultDays, allowTaskOverlap, autoConnectionSides, handleWidth, handleGap, edgeLevel, arrowLevel, personalDefaults, theme, primaryColor, collapsedProjectColor, tablePalettes, colors, customColorPresets, appearance, editorMode, settingsWidth, timelineRowHeight, dayWidth, weekStart, defaultTaskType, hoverSpeed, taskHoverHints, completedMode, insertionDelay, inboxCompleted, inboxSize, ready, syncProvider, syncAccount, activeTimelineId]);
+  }, [projects, tasks, edges, tracks, inbox, inboxKind, inboxSort, inboxCollapsed, collapsedProjects, defaultDays, allowTaskOverlap, autoConnectionSides, handleWidth, handleGap, edgeLevel, arrowLevel, arrowShape, todayMarkerStyle, personalDefaults, theme, primaryColor, collapsedProjectColor, tablePalettes, colors, customColorPresets, appearance, editorMode, timelineRowHeight, dayWidth, weekStart, defaultTaskType, hoverSpeed, taskHoverHints, completedMode, insertionDelay, inboxCompleted, inboxSize, ready, syncProvider, syncAccount, activeTimelineId]);
   useEffect(()=>{
     if(ready&&syncProvider!=="local"&&syncAccount&&(syncProvider!=="webdav"||webDavEnabled))scheduleCloudSync(150);
     return()=>{if(cloudSyncTimer.current)clearTimeout(cloudSyncTimer.current);};
@@ -1587,10 +1637,10 @@ function TimelineWorkspace() {
         onPointerDown={event=>startTaskDrag(event,task)} onPointerMove={event=>moveDrag(event,task)} onPointerUp={event=>finishDrag(event,task)}
         onPointerCancel={cancelTaskDrag} onMouseEnter={()=>setHoveredTask(task.id)} onMouseLeave={()=>setHoveredTask(null)}
         onClick={event=>selectTask(event,task)} onDoubleClick={()=>openTask(task)}
-        className={`task-body absolute flex touch-none select-none items-center text-left ${task.milestone?"milestone justify-center rotate-45":"px-2"} ${activeDrag?"cursor-grabbing":"cursor-grab"}`}
+        className={`task-body absolute flex touch-none select-none items-center text-left ${task.milestone?"milestone justify-center rotate-45":g.width<=80?"px-[3px]":"px-2"} ${activeDrag?"cursor-grabbing":"cursor-grab"}`}
         style={{...taskStyle,scale:task.milestone&&expanding?1.3:1,...(task.milestone?{width:milestoneSize,height:milestoneSize,left:g.left+(g.width-milestoneSize)/2,top:(timelineRowHeight-milestoneSize)/2}:{}),translate:activeDrag?`0 ${dragOffset(task.id)}px`:undefined,zIndex:task.milestone?45:hoveredTask===task.id&&!linkPreview?40:20}}>
         {task.milestone ? <Diamond size={layoutTokens.arrowSize*2} className="-rotate-45"/> : <>
-          <ExpandingTaskLabel title={t(task.title)} width={g.width} height={appearance.barHeight} active={expanding} completed={task.status==="已完成"} onScaleChange={scale=>registerTaskExpansion(task.id,scale)}/>
+          <ExpandingTaskLabel compact={g.width<=80} title={t(task.title)} width={g.width} height={appearance.barHeight} active={expanding} completed={task.status==="已完成"} onScaleChange={scale=>registerTaskExpansion(task.id,scale)}/>
           {(["start","end"] as const).map(edge=><span key={edge} role="separator" aria-label={t("调整{0}的{1}日期", t(task.title), edge==="start" ? t("开始") : t("结束"))}
             onClick={event=>event.stopPropagation()} onPointerDown={event=>{event.stopPropagation();if(resizeFrame.current!==null){cancelAnimationFrame(resizeFrame.current);resizeFrame.current=null;}pendingResizePointer.current=null;event.currentTarget.setPointerCapture(event.pointerId);setResize({id:task.id,edge,startX:event.clientX,previewDays:0,moved:false});}}
             onPointerMove={event=>moveResize(event,task)} onPointerUp={event=>finishResize(event,task)} onPointerCancel={cancelTaskResize}
@@ -1737,14 +1787,14 @@ function TimelineWorkspace() {
   };
   const resetSettings=(category= settingsCategory)=>{
     if(category==="general"){const d=personalDefaults.general;setEditorMode(d?.editorMode??"panel");}
-    if(category==="timeline"){const d=personalDefaults.timeline;setWeekStart(d?.weekStart??1);setDayWidth(nearestPreset(d?.dayWidth??54,[36,54,68,80]));setTimelineRowHeight(nearestPreset(d?.timelineRowHeight??64,[48,64,76,88]));setInsertionDelay(nearestPreset(d?.insertionDelay??300,[150,300,600]));setAppearance(current=>({...current,weekends:d?.weekends??true,weekBoundaries:d?.weekBoundaries??true}));}
+    if(category==="timeline"){const d=personalDefaults.timeline;setTodayMarkerStyle(restoreTodayMarkerStyle(d?.todayMarkerStyle));setWeekStart(d?.weekStart??1);setDayWidth(nearestPreset(d?.dayWidth??54,[36,54,68,80]));setTimelineRowHeight(nearestPreset(d?.timelineRowHeight??64,[48,64,76,88]));setInsertionDelay(nearestPreset(d?.insertionDelay??300,[150,300,600]));setAppearance(current=>({...current,weekends:d?.weekends??true,weekBoundaries:d?.weekBoundaries??true}));}
     if(category==="tasks"){const d=personalDefaults.tasks;setDefaultDays(d?.defaultDays??4);setDefaultTaskType(d?.defaultTaskType&&colors[d.defaultTaskType]?d.defaultTaskType:fallbackType);setAllowTaskOverlap(d?.allowTaskOverlap??false);setHoverSpeed(d?.hoverSpeed??"medium");setTaskHoverHints(d?.taskHoverHints??true);setCompletedMode(d?.completedMode??"fade");setAppearance(current=>({...current,barHeight:snapAppearanceValue("barHeight",d?.barHeight??24),barRadius:snapAppearanceValue("barRadius",d?.barRadius??4),barFill:snapAppearanceValue("barFill",d?.barFill??16),completedOpacity:snapAppearanceValue("completedOpacity",d?.completedOpacity??55)}));}
-    if(category==="links"){const d=personalDefaults.links;setHandleGap(nearestPreset(d?.handleGap??4,[2,4,8,12]));setHandleWidth(nearestPreset(d?.handleWidth??6,[4,6,8,10]));setAutoConnectionSides(d?.autoConnectionSides??true);setEdgeLevel(d?.edgeLevel??"regular");setArrowLevel(d?.arrowLevel??"regular");setAppearance(current=>({...current,lineOpacity:snapAppearanceValue("lineOpacity",d?.lineOpacity??22)}));}
+    if(category==="links"){const d=personalDefaults.links;setHandleGap(nearestPreset(d?.handleGap??4,[2,4,8,12]));setHandleWidth(nearestPreset(d?.handleWidth??6,[4,6,8,10]));setAutoConnectionSides(d?.autoConnectionSides??true);setEdgeLevel(d?.edgeLevel??"regular");setArrowLevel(d?.arrowLevel??"regular");setArrowShape(restoreArrowShape(d?.arrowShape));setAppearance(current=>({...current,lineOpacity:snapAppearanceValue("lineOpacity",d?.lineOpacity??22)}));}
     if(category==="inbox"){const d=personalDefaults.inbox;setInboxKind(d?.inboxKind??"checklist");setInboxCompleted(d?.inboxCompleted??"show");}
     if(category==="appearance"){const d=personalDefaults.appearance;setTheme(d?.theme??"system");setPrimaryColor(d?.primaryColor??"#4C7EF3");setCollapsedProjectColor(d?.collapsedProjectColor??categoryDefaults.整理);setAppearance(current=>({...current,collapsedOpacity:snapAppearanceValue("collapsedOpacity",d?.collapsedOpacity??60)}));setColors(d?.colors?restoreCategories(d.colors):categoryDefaults);setTablePalettes(d?.tablePalettes?migrateTablePalettes(d.tablePalettes,2):defaultTablePalettes);}
   };
   const saveCategoryDefault=()=>{
-    const value=settingsCategory==="general"?{editorMode}:settingsCategory==="timeline"?{weekStart,dayWidth,timelineRowHeight,insertionDelay,weekends:appearance.weekends,weekBoundaries:appearance.weekBoundaries}:settingsCategory==="tasks"?{defaultDays,defaultTaskType,allowTaskOverlap,hoverSpeed,taskHoverHints,completedMode,barHeight:appearance.barHeight,barRadius:appearance.barRadius,barFill:appearance.barFill,completedOpacity:appearance.completedOpacity}:settingsCategory==="links"?{handleGap,handleWidth,autoConnectionSides,lineOpacity:appearance.lineOpacity,edgeLevel,arrowLevel}:settingsCategory==="inbox"?{inboxKind,inboxCompleted}:{theme,primaryColor,collapsedProjectColor,collapsedOpacity:appearance.collapsedOpacity,colors:{...colors},tablePalettes:structuredClone(tablePalettes)};
+    const value=settingsCategory==="general"?{editorMode}:settingsCategory==="timeline"?{todayMarkerStyle,weekStart,dayWidth,timelineRowHeight,insertionDelay,weekends:appearance.weekends,weekBoundaries:appearance.weekBoundaries}:settingsCategory==="tasks"?{defaultDays,defaultTaskType,allowTaskOverlap,hoverSpeed,taskHoverHints,completedMode,barHeight:appearance.barHeight,barRadius:appearance.barRadius,barFill:appearance.barFill,completedOpacity:appearance.completedOpacity}:settingsCategory==="links"?{handleGap,handleWidth,autoConnectionSides,lineOpacity:appearance.lineOpacity,edgeLevel,arrowLevel,arrowShape}:settingsCategory==="inbox"?{inboxKind,inboxCompleted}:{theme,primaryColor,collapsedProjectColor,collapsedOpacity:appearance.collapsedOpacity,colors:{...colors},tablePalettes:structuredClone(tablePalettes)};
     setPersonalDefaults(current=>({...current,[settingsCategory]:value} as PersonalDefaults));setNotice("当前选项已设为个人默认。");
   };
   const applyColorPreset=(preset:ColorPreset)=>{setPrimaryColor(preset.primary);setColors(current=>{const palette=Object.values(preset.categories);return Object.fromEntries(Object.keys(current).map((name,index)=>[name,preset.categories[name]??palette[index%palette.length]??fallbackColor]));});setTablePalettes(current=>({...current,[preset.mode]:{...preset.table}}));if(theme!==preset.mode)setTheme(preset.mode);};
@@ -1768,7 +1818,7 @@ function TimelineWorkspace() {
   const confirmJsonImport=()=>{
     if(!pendingImport)return;
     try{localStorage.setItem("research-gantt-before-import",JSON.stringify(createBackup(persistedState)));}catch{}
-    applyPersistedState(pendingImport.state);setPendingImport(null);setSelectedTask(null);setSelectedEdge(null);setEditing(null);setNotice("数据已导入并迁移到最新版本。");
+    applyPersistedState(pendingImport.state,"edit");setPendingImport(null);setSelectedTask(null);setSelectedEdge(null);setEditing(null);setNotice("数据已导入并迁移到最新版本。");
   };
   const resetAllSettings=()=>{(["general","timeline","tasks","links","inbox","appearance"] as const).forEach(resetSettings);};
   const onInboxSizeChange=useCallback((size:{width:number;height:number})=>setInboxSize(size),[]);
@@ -1848,16 +1898,13 @@ function TimelineWorkspace() {
                 <button aria-label={t("拖动整行：{0}", t(track.title))} onPointerDown={event=>startRowDrag(event,row.task,row.project.id)} onClick={event=>event.stopPropagation()} className="row-handle grid h-10 w-4 shrink-0 cursor-grab touch-none place-items-center text-slate-400"><GripVertical size={15}/></button>
                 <button onDoubleClick={()=>openTrackEditor(row.task)} className="min-w-0 flex-1 text-left" title={t("双击编辑任务轨")}><span className="task-row-name block truncate">{t(track.title)}</span><span className="row-details"><span className="category-dot" title={t(track.type)} style={{"--task-color":colors[track.type]??fallbackColor} as React.CSSProperties}/><span className="meta track-type">{t(track.type)}</span></span></button>
                 <span className="track-row-side"><button type="button" className="track-edit grid size-5 place-items-center" aria-label={t("编辑任务轨：{0}",t(track.title))} onClick={()=>openTrackEditor(row.task)}><Pencil size={12}/></button><span className="meta track-count">{row.tasks.length} {" "}{t("项")}</span></span>
-              </div>;})() : row.kind==="summary" ? <button className="h-full w-full px-4 text-left text-sm" onClick={()=>toggleProject(row.project.id)}>{t("项目摘要 ·")}{" "}{row.tasks.length} {" "}{t("项")}</button> : row.kind==="empty"&&collapsedProjects.has(row.project.id)?<button className="h-full w-full px-4 text-left text-xs text-[var(--muted-foreground)]" onClick={()=>toggleProject(row.project.id)}>{t("0 项")}</button>:<button className="add-task-link flex h-full w-full items-center gap-2 px-4 text-left text-xs" onClick={()=>addTaskToProject(row.project.id)}><Plus size={14}/>{row.kind==="add" ? t("此项目中的新事项") : t("添加第一个事项")}</button>}
+              </div>;})() : row.kind==="summary" ? <button className="h-full w-full px-4 text-left text-sm" onClick={()=>toggleProject(row.project.id)}>{t("项目摘要 ·")}{" "}{row.tasks.length} {" "}{t("项")}</button> : row.kind==="empty"&&collapsedProjects.has(row.project.id)?<button className="h-full w-full px-4 text-left text-xs text-[var(--muted-foreground)]" onClick={()=>toggleProject(row.project.id)}>{t("0 项")}</button>:<button className="add-task-link flex h-full w-full items-center gap-2 px-4 text-left text-xs" onClick={()=>addTaskToProject(row.project.id)}><Plus size={14}/>{row.kind==="add" ? t("新事项") : t("添加第一个事项")}</button>}
             </div>;
           })}{taskColumnDivider()}
         </div>
-        <div aria-hidden="true" className="pointer-events-none sticky left-0 z-10" style={{gridColumn:"1 / -1",gridRow:3,width:viewportWidth,height:0,alignSelf:"start"}}>
-          {visibleRows.map((row,index)=>row.kind==="add"?<div key={row.project.id} style={{position:"absolute",left:frozenWidth,right:0,top:rowTops[index],height:layoutTokens.addRowHeight,background:"var(--table-add)",borderBottom:`1px solid ${visibleRows[index+1]?.project.id!==row.project.id?"var(--table-projectLine)":"var(--border)"}`}}/>:null)}
-        </div>
-        {todayOffset>=0&&todayOffset<=cellCount&&<div aria-hidden="true" className="pointer-events-none relative z-[15]" style={{gridColumn:3,gridRow:3,width:totalWidth,height:rowsHeight}}><div className="today-line" style={{left:todayOffset*cellWidth}}/></div>}
 <div ref={timeline} data-timeline-canvas onDoubleClick={createAtPoint} onClick={choosePasteAnchor} className={`relative select-none ${panning ? "cursor-grabbing" : "cursor-grab"}`} style={{ gridColumn:3,gridRow:3,backgroundColor:"var(--table-canvas)",width: totalWidth, height:rowsHeight, touchAction:"pan-y",isolation:"isolate",overflow:"clip",zIndex:0,clipPath:`inset(0 0 0 ${scrollOffset}px)` }} onPointerDown={startPan} onPointerMove={movePan} onPointerUp={endPan} onPointerCancel={endPan} onLostPointerCapture={endPan} onClickCapture={event=>{if(suppressPanClick.current){event.preventDefault();event.stopPropagation();suppressPanClick.current=false;}}}>
           <div className="calendar-grid" aria-hidden="true">{calendarDays.map(date=><div key={date.toISOString()} className="calendar-column" style={{width:cellWidth/stepDays}} data-week={appearance.weekBoundaries&&date.getDay()===weekStart} data-month={date.getDate()===1} data-weekend={appearance.weekends&&(date.getDay()===0||date.getDay()===6)}/>)}</div>
+          {todayOffset+TODAY_BAND_DAYS/stepDays>0&&todayOffset<cellCount&&<div aria-hidden="true" className={todayMarkerStyle==="band"?"today-band":"today-line"} style={{left:todayOffset*cellWidth,...(todayMarkerStyle==="band"?{width:TODAY_BAND_DAYS*cellWidth/stepDays}:{})}}/>}
           {pasteAnchor?.documentId===activeTimelineId&&(()=>{const day=differenceInCalendarDays(new Date(pasteAnchor.date+"T00:00:00"),anchor),index=visibleRows.findIndex(row=>row.project.id===pasteAnchor.projectId&&(pasteAnchor.rowKind==="task"?row.kind==="task"&&rowId(row.task)===pasteAnchor.rowId:row.kind===pasteAnchor.rowKind));if(index<0||day<0||day>=cellCount*stepDays)return null;return <div aria-hidden="true" className="pointer-events-none absolute z-[18] rounded-sm border border-dashed border-[var(--primary)]" style={{left:day*cellWidth/stepDays,top:rowTops[index],width:cellWidth/stepDays,height:rowHeight(visibleRows[index]),backgroundColor:"color-mix(in srgb, var(--primary) 12%, transparent)"}}/>;})()}
           {linkPreview&&<svg className="pointer-events-none absolute inset-0 z-50 h-full w-full overflow-visible" aria-hidden="true">
             <path d={previewPath} fill="none" stroke="var(--primary)" strokeWidth={edgeStroke} strokeLinecap="round"/>
@@ -1882,14 +1929,13 @@ function TimelineWorkspace() {
               const isHovered=hoveredEdge?.id===connection.edge.id;
               const focused=tasks.find(task=>task.id===(focusTask??connection.edge.source.taskId));
               const stroke=related||isSelected||isHovered?(colors[focused?.type??fallbackType]??fallbackColor):"var(--dependency-color)";
-              const arrow=arrowSize;
               const direction=connection.edge.target.side==="top"?-1:1;
               const filtered=categoryFilter&&!([connection.edge.source.taskId,connection.edge.target.taskId].some(id=>tasks.find(task=>task.id===id)?.type===categoryFilter));
               const completed=dependencyIsCompleted(connection.edge,tasks);
               return <g key={connection.key} style={{visibility:linkPreview?.edgeId===connection.edge.id?"hidden":undefined}} opacity={filtered?.2:completed&&!isSelected&&!isHovered?appearance.completedOpacity/100:1}>
                 <path d={connection.path} fill="none" stroke="var(--table-canvas)" strokeWidth={edgeStroke+2} strokeLinecap="round" strokeLinejoin="round"/>
                 <path className="dependency-stroke" d={connection.path} fill="none" stroke={stroke} strokeWidth={edgeStroke} strokeLinecap="round" strokeLinejoin="round"/>
-                <path d={`M ${connection.to.x-arrow/2} ${connection.to.y+direction*arrow} L ${connection.to.x} ${connection.to.y} L ${connection.to.x+arrow/2} ${connection.to.y+direction*arrow} Z`} fill={stroke}/>
+                <path d={arrowPath(connection.to.x,connection.to.y,direction,arrowWidth,arrowHeight,arrowShape)} fill={arrowShape==="wide-chevron"?"none":stroke} stroke={arrowShape==="wide-chevron"?stroke:undefined} strokeWidth={Math.max(edgeStroke,arrowSize*.18)} strokeLinecap="round" strokeLinejoin="round"/>
                 <path d={connection.path} fill="none" stroke="transparent" strokeWidth={layoutTokens.edgeHit} pointerEvents="stroke" className="cursor-pointer" role="button" tabIndex={0} aria-label={t("双击编辑连接线")} aria-pressed={isSelected}
                   onPointerEnter={event=>setHoveredEdge({id:connection.edge.id,x:event.clientX,y:event.clientY,above:event.clientY>window.innerHeight-180})}
                   onPointerLeave={()=>setHoveredEdge(current=>current?.id===connection.edge.id?null:current)}
@@ -1959,7 +2005,7 @@ function TimelineWorkspace() {
           {settingsCategory==="sync"&&<>
             <h3>{t("云同步")}</h3>
             <div className="setting-row"><div><strong>{t("同步方式")}</strong><p>{t("本地保存始终开启；启用云端后，修改会自动同步到自己的其他设备。")}</p></div><Tabs value={syncProvider} onValueChange={value=>value==="sites"?enableCloudSync():value==="webdav"?selectWebDav():disableCloudSync()}><TabsList><TabsTrigger value="local">{t("仅本地")}</TabsTrigger><TabsTrigger value="sites">{t("Squitle 云端")}</TabsTrigger><TabsTrigger value="webdav">WebDAV</TabsTrigger></TabsList></Tabs></div>
-            <div className="setting-row"><div><strong>{t("默认数据源")}</strong><p>{t("首次连接或两端同时修改时，按此选项处理；合并会保留两端独有内容并跳过重复事项。")}</p></div><Tabs value={syncDataPreference} onValueChange={rememberSyncDataPreference}><TabsList><TabsTrigger value="ask">{t("每次询问")}</TabsTrigger><TabsTrigger value="merge">{t("自动合并")}</TabsTrigger><TabsTrigger value="cloud">{t("优先云端")}</TabsTrigger><TabsTrigger value="device">{t("优先此设备")}</TabsTrigger></TabsList></Tabs></div>
+            <div className="setting-row"><div><strong>{t("默认数据源")}</strong><p>{t("首次连接时按此选项处理；两端同时修改时会保留双方版本并询问，避免覆盖新编辑。")}</p></div><Tabs value={syncDataPreference} onValueChange={rememberSyncDataPreference}><TabsList><TabsTrigger value="ask">{t("每次询问")}</TabsTrigger><TabsTrigger value="merge">{t("自动合并")}</TabsTrigger><TabsTrigger value="cloud">{t("优先云端")}</TabsTrigger><TabsTrigger value="device">{t("优先此设备")}</TabsTrigger></TabsList></Tabs></div>
             {syncProvider==="webdav"&&<fieldset className="settings-section"><legend>{t("WebDAV 连接")}</legend>
               <div className="setting-row"><div><strong>{t("服务")}</strong></div><Tabs value={webDavService} onValueChange={value=>{const service=value as typeof webDavService;setWebDavService(service);if(service==="nutstore")setWebDavUrl(NUTSTORE_WEBDAV_URL);}}><TabsList><TabsTrigger value="nutstore">{t("坚果云")}</TabsTrigger><TabsTrigger value="custom">{t("其他 WebDAV")}</TabsTrigger></TabsList></Tabs></div>
               <div className="setting-row"><div><strong>{t("文件地址")}</strong><p>{t(webDavService==="nutstore"?"坚果云地址已自动设置，数据保存为根目录下的 squitle.json。":"请输入指向 JSON 文件的完整 HTTPS 地址。")}</p></div><Input data-enter-action="local" className="max-w-sm" value={webDavService==="nutstore"?NUTSTORE_WEBDAV_URL:webDavUrl} disabled={webDavService==="nutstore"} inputMode="url" autoCapitalize="none" spellCheck={false} onChange={event=>setWebDavUrl(event.target.value)} placeholder="https://example.com/dav/squitle.json"/></div>
@@ -1977,6 +2023,7 @@ function TimelineWorkspace() {
             <h3>{timelineTitle}</h3>
             <fieldset className="settings-section"><legend>{t("TimeLine 管理")}</legend><div className="timeline-manager-list">{timelines.map(entry=><div key={entry.documentId} className="timeline-manager-row" data-active={entry.documentId===activeTimelineId||undefined}><Button type="button" size="sm" variant={entry.documentId===activeTimelineId?"secondary":"outline"} onClick={()=>void switchTimeline(entry.documentId)} disabled={entry.documentId===activeTimelineId}>{t(entry.documentId===activeTimelineId?"当前":"打开")}</Button><Input data-enter-action="local" maxLength={80} value={timelineDrafts[entry.documentId]??entry.title} onChange={event=>setTimelineDrafts(current=>({...current,[entry.documentId]:event.target.value}))} onKeyDown={event=>{if(event.key==="Enter"&&!event.nativeEvent.isComposing){event.preventDefault();void commitTimelineRename(entry);}}} aria-label={t("TimeLine 名称")}/><Button type="button" size="icon" variant="ghost" aria-label={t("保存名称")} onClick={()=>void commitTimelineRename(entry)}><Check className="size-4"/></Button><Button type="button" size="icon" variant="ghost" className="text-[var(--destructive)]" aria-label={t("删除 TimeLine：{0}",entry.title)} disabled={timelines.length<=1} onClick={()=>setPendingTimelineDelete(entry)}><Trash2 className="size-4"/></Button></div>)}</div><p className="meta">{t("选择要编辑的 TimeLine；名称会随云同步保存。至少保留一个 TimeLine。")}</p></fieldset>
             <div className="setting-row"><div><strong>{t("每周起始日")}</strong></div><Tabs value={String(weekStart)} onValueChange={value=>setWeekStart(Number(value) as 0|1)}><TabsList><TabsTrigger value="1">{t("周一")}</TabsTrigger><TabsTrigger value="0">{t("周日")}</TabsTrigger></TabsList></Tabs></div>
+            <div className="setting-row"><div><strong>{t("当前时间标记")}</strong><p>{t("每小时更新；条状覆盖当前整点起的 2 小时。")}</p></div><Tabs value={todayMarkerStyle} onValueChange={value=>setTodayMarkerStyle(restoreTodayMarkerStyle(value))}><TabsList><TabsTrigger value="line">{t("线状")}</TabsTrigger><TabsTrigger value="band">{t("条状")}</TabsTrigger></TabsList></Tabs></div>
             <div className="setting-row"><div><strong>{t("日期显示密度")}</strong><p>{t("调整每天在时间轴上的宽度。")}</p></div><PresetTabs value={dayWidth} onChange={value=>setDayWidth(Number(value))} options={[[t("紧凑"),36],[t("标准"),54],[t("宽松"),68],[t("宽敞"),80]]}/></div>
             <div className="setting-row"><div><strong>{t("事项行高")}</strong></div><PresetTabs value={timelineRowHeight} onChange={value=>setTimelineRowHeight(Number(value))} options={[[t("紧凑"),48],[t("标准"),64],[t("宽松"),76],[t("宽敞"),88]]}/></div>
             <div className="setting-row"><div><strong>{t("插入新行等待时间")}</strong><p>{t("事项停在两行之间后，提示和完整行依次展开。")}</p></div><PresetTabs value={insertionDelay} onChange={value=>setInsertionDelay(Number(value))} options={[[t("快"),150],[t("中"),300],[t("慢"),600]]}/></div>
@@ -2001,6 +2048,7 @@ function TimelineWorkspace() {
             <div className="setting-row"><div><strong>{t("默认连线不透明度")}</strong></div><PresetTabs value={appearance.lineOpacity} onChange={value=>setAppearance(current=>({...current,lineOpacity:Number(value)}))} options={appearancePresetLabels.lineOpacity.map(([label,value])=>[t(label),value])}/></div>
             <div className="setting-row"><div><strong>{t("连线粗细")}</strong></div><Tabs value={edgeLevel} onValueChange={value=>setEdgeLevel(value as EdgeLevel)}><TabsList>{([['thin','细'],['regular','标准'],['thick','粗'],['bold','加粗']] as const).map(([value,label])=><TabsTrigger key={value} value={value}>{t(label)}</TabsTrigger>)}</TabsList></Tabs></div>
             <div className="setting-row"><div><strong>{t("箭头大小")}</strong></div><Tabs value={arrowLevel} onValueChange={value=>setArrowLevel(value as ArrowLevel)}><TabsList>{([['small','小'],['regular','标准'],['large','大'],['xlarge','特大']] as const).map(([value,label])=><TabsTrigger key={value} value={value}>{t(label)}</TabsTrigger>)}</TabsList></Tabs></div>
+            <div className="setting-row"><div><strong>{t("箭头形状")}</strong></div><Tabs value={arrowShape} onValueChange={value=>setArrowShape(restoreArrowShape(value))}><TabsList>{([['standard','标准三角'],['wide-triangle','宽扁实心'],['wide-chevron','宽扁折线']] as const).map(([value,label])=>{const size=arrowDimensions(value,9);return <TabsTrigger key={value} value={value}><svg width="24" height="18" viewBox="0 0 24 18" aria-hidden="true"><path d={arrowPath(12,14,-1,size.width,size.height,value)} fill={value==="wide-chevron"?"none":"currentColor"} stroke={value==="wide-chevron"?"currentColor":undefined} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/></svg>{t(label)}</TabsTrigger>;})}</TabsList></Tabs></div>
           </>}
           {settingsCategory==="inbox"&&<>
             <h3>{inboxTitle}</h3>

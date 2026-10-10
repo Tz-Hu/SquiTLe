@@ -1,3 +1,4 @@
+import {sharedState} from "./local-edit-tracker.ts";
 import type {ScheduleDocument} from "../persistence/persistence";
 import type {KeyValueStorage} from "../persistence/storage";
 
@@ -46,7 +47,19 @@ export async function remoteRevisionChanged(
 }
 
 export function documentFingerprint(document:ScheduleDocument){
-  return JSON.stringify(document);
+  // Revisions/timestamps describe writes, not user edits. Sort object keys so
+  // hydration/serialization order and device-only layout cannot create changes.
+  return JSON.stringify({documentId:document.documentId,title:document.title??"",data:sharedState(document.data)},(_key,value)=>
+    value&&typeof value==="object"&&!Array.isArray(value)
+      ?Object.fromEntries(Object.keys(value).sort().map(key=>[key,value[key]])):value);
+}
+
+function checkpointFingerprint(value:string){
+  try{
+    const parsed=JSON.parse(value);
+    if(parsed&&typeof parsed.documentId==="string"&&parsed.data)return documentFingerprint(parsed);
+  }catch{}
+  return value;
 }
 
 export function checkpointFrom(snapshot:CloudScheduleSnapshot,now:()=>Date=()=>new Date()):SyncCheckpoint{
@@ -79,7 +92,7 @@ export async function syncScheduleDocument(
     return {status:"initial-choice",local,remote,checkpoint:null};
   }
 
-  const localChanged=localFingerprint!==checkpoint.documentFingerprint;
+  const localChanged=localFingerprint!==checkpointFingerprint(checkpoint.documentFingerprint);
   const remoteChanged=remote.serverRevision!==checkpoint.serverRevision;
   if(!localChanged&&!remoteChanged){
     return {status:"current",document:local,checkpoint:{...checkpoint,syncedAt:now().toISOString()}};

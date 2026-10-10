@@ -1,7 +1,10 @@
-export const todayMarkerFraction = (date: Date) => Math.floor(date.getHours() / 6) / 4;
+export type TodayMarkerStyle = "line" | "band";
+export const restoreTodayMarkerStyle = (value: unknown): TodayMarkerStyle => value === "line" ? "line" : "band";
+export const TODAY_BAND_DAYS = 2 / 24;
+export const todayMarkerFraction = (date: Date) => date.getHours() / 24;
 
 export const millisecondsUntilNextTodayMarker = (date: Date) => {
   const next = new Date(date);
-  next.setHours((Math.floor(date.getHours() / 6) + 1) * 6, 0, 0, 0);
+  next.setHours(date.getHours() + 1, 0, 0, 0);
   return Math.max(1, next.getTime() - date.getTime());
 };

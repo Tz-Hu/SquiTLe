@@ -16,7 +16,7 @@ test('task column width respects its normal limits', () => {
 
 test('task column leaves usable room for the timeline', () => {
   assert.equal(clampTaskColumnWidth(420,760),280);
-  assert.equal(clampTaskColumnWidth(420,600),TASK_COLUMN_MIN);
+  assert.equal(clampTaskColumnWidth(420,600),120);
 });
 
 test('collapsed projects keep one readable text line while staying compact', () => {
